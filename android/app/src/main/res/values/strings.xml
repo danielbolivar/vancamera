@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">VanCamera Android</string>
+    <string name="start_streaming">Iniciar Streaming</string>
+    <string name="stop_streaming">Detener Streaming</string>
+    <string name="connected">Conectado</string>
+    <string name="disconnected">Desconectado</string>
+    <string name="settings">Configuración</string>
+    <string name="camera_permission_required">Se requiere permiso de cámara para usar esta aplicación</string>
+</resources>

@@ -3,8 +3,10 @@ package com.vancamera.android
 import android.content.Context
 import android.util.Base64
 import org.bouncycastle.asn1.x500.X500Name
+import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo
 import org.bouncycastle.cert.X509v3CertificateBuilder
 import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter
+import org.bouncycastle.jce.provider.BouncyCastleProvider
 import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder
 import org.conscrypt.Conscrypt
 import java.io.File
@@ -13,6 +15,7 @@ import java.security.KeyPair
 import java.security.KeyPairGenerator
 import java.security.KeyStore
 import java.security.SecureRandom
+import java.security.Security
 import java.security.cert.Certificate
 import java.security.cert.X509Certificate
 import java.util.Date
@@ -30,13 +33,23 @@ class CertificateManager(private val context: Context) {
     companion object {
         private const val KEY_ALIAS = "vancamera_key"
         private const val CERTIFICATE_FILE = "vancamera_cert.pem"
-        private const val KEYSTORE_FILE = "vancamera_keystore.jks"
+        private const val KEYSTORE_FILE = "vancamera_keystore.p12"
         private const val KEYSTORE_PASSWORD = "vancamera_secure_password"
         private const val KEY_SIZE = 2048
         private const val VALIDITY_YEARS = 10
+        private const val KEYSTORE_TYPE = "PKCS12"
     }
 
     init {
+        // Ensure BouncyCastle provider is available for certificate generation/signing.
+        try {
+            if (Security.getProvider("BC") == null) {
+                Security.insertProviderAt(BouncyCastleProvider(), 1)
+            }
+        } catch (e: Exception) {
+            // Continue; signing may fail if provider cannot be registered.
+        }
+
         // Instalar Conscrypt como provider de seguridad para TLS 1.3
         try {
             Conscrypt.newProvider().let { provider ->
@@ -96,25 +109,32 @@ class CertificateManager(private val context: Context) {
             notBefore,
             notAfter,
             subject,
-            org.bouncycastle.asn1.x509.SubjectPublicKeyInfo.getInstance(
-                org.bouncycastle.asn1.pkcs.PrivateKeyInfo.getInstance(keyPair.public.encoded)
-            )
+            // Correctly encode the *public* key as SubjectPublicKeyInfo.
+            // The previous code incorrectly attempted to parse it as PrivateKeyInfo, causing:
+            // "illegal object in getInstance: org.bouncycastle.asn1.DLSequence"
+            SubjectPublicKeyInfo.getInstance(keyPair.public.encoded)
         )
 
-        // Firmar el certificado
+        // Sign the certificate.
+        //
+        // Note: Do NOT force the "BC" provider here. On Android, the bundled/relocated
+        // BouncyCastle provider may not expose the expected Signature algorithms under
+        // the provider name "BC", which leads to:
+        // "no such algorithm: SHA256WITHRSA for provider BC".
+        //
+        // Using the platform's default provider for RSA signing is sufficient.
         val signer = JcaContentSignerBuilder("SHA256withRSA")
-            .setProvider("BC")
             .build(keyPair.private)
 
         val certHolder = certBuilder.build(signer)
 
-        // Convertir a X509Certificate de Java
+        // Convert to a Java X509Certificate.
         val certConverter = JcaX509CertificateConverter()
-            .setProvider("BC")
         val cert = certConverter.getCertificate(certHolder) as X509Certificate
 
         // Guardar en keystore
-        val keystore = KeyStore.getInstance("JKS")
+        // Use PKCS12 on Android; JKS is not available.
+        val keystore = KeyStore.getInstance(KEYSTORE_TYPE)
         keystore.load(null, null)
         val certChain = arrayOf<Certificate>(cert)
         keystore.setKeyEntry(KEY_ALIAS, keyPair.private, KEYSTORE_PASSWORD.toCharArray(), certChain)
@@ -203,7 +223,7 @@ class CertificateManager(private val context: Context) {
             getOrCreateCertificate() // Esto creará el keystore
         }
 
-        val keystore = KeyStore.getInstance("JKS")
+        val keystore = KeyStore.getInstance(KEYSTORE_TYPE)
         keystore.load(keystoreFile.inputStream(), KEYSTORE_PASSWORD.toCharArray())
 
         val keyManagerFactory = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm())

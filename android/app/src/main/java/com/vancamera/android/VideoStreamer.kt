@@ -7,13 +7,12 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.io.OutputStream
-import java.net.Socket
 import javax.net.ssl.SSLContext
+import javax.net.ssl.SSLServerSocket
 import javax.net.ssl.SSLSocket
-import javax.net.ssl.SSLSocketFactory
 
 /**
- * Gestor de transmisión de video vía TLS 1.3
+ * Video streaming manager over TLS 1.3.
  */
 class VideoStreamer(
     private val context: Context,
@@ -25,50 +24,55 @@ class VideoStreamer(
         private const val TAG = "VideoStreamer"
     }
 
+    private var serverSocket: SSLServerSocket? = null
     private var sslSocket: SSLSocket? = null
     private var outputStream: OutputStream? = null
     private val isConnected = MutableStateFlow(false)
     private val connectionState: StateFlow<Boolean> = isConnected
 
     /**
-     * Estado de conexión observable
+     * Observable connection state.
      */
     fun getConnectionState(): StateFlow<Boolean> = connectionState
 
     /**
-     * Conecta al servidor Windows usando TLS 1.3
+     * Starts a TLS 1.3 server socket and waits for a Windows client to connect.
+     *
+     * Note: Windows acts as the TLS client and should connect to this device's IP and port.
      */
     suspend fun connect() = withContext(Dispatchers.IO) {
         try {
-            Log.d(TAG, "Conectando a ${connectionConfig.serverIp}:${connectionConfig.serverPort}")
+            Log.d(TAG, "Waiting for client on 0.0.0.0:${connectionConfig.serverPort}")
 
-            // Crear SSLContext con el certificado
+            // Create SSLContext with our certificate/private key.
             val sslContext = certificateManager.createSSLContext()
 
-            // Crear socket SSL
-            val socketFactory = sslContext.socketFactory
-            val socket = socketFactory.createSocket(
-                connectionConfig.serverIp,
-                connectionConfig.serverPort
-            ) as SSLSocket
+            // Create SSL server socket.
+            val ss = (sslContext.serverSocketFactory.createServerSocket(connectionConfig.serverPort) as SSLServerSocket).apply {
+                enabledProtocols = arrayOf("TLSv1.3")
+                needClientAuth = false
+                reuseAddress = true
+            }
 
-            // Forzar TLS 1.3
+            serverSocket = ss
+
+            // Accept a single client connection.
+            val socket = ss.accept() as SSLSocket
             socket.enabledProtocols = arrayOf("TLSv1.3")
-            socket.enabledCipherSuites = socket.supportedCipherSuites
 
-            // Iniciar handshake
+            // Perform handshake.
             socket.startHandshake()
 
             sslSocket = socket
-            outputStream = socket.getOutputStream()
+            outputStream = socket.outputStream
 
             isConnected.value = true
-            Log.d(TAG, "Conexión establecida exitosamente")
+            Log.d(TAG, "Client connected successfully")
 
         } catch (e: Exception) {
             Log.e(TAG, "Error al conectar: ${e.message}", e)
             isConnected.value = false
-            throw StreamException("Error al conectar: ${e.message}", e)
+            throw StreamException("Failed to accept client: ${e.message}", e)
         }
     }
 
@@ -110,14 +114,16 @@ class VideoStreamer(
     }
 
     /**
-     * Desconecta del servidor
+     * Disconnects the current client and stops the server socket.
      */
     suspend fun disconnect() = withContext(Dispatchers.IO) {
         try {
             outputStream?.close()
             sslSocket?.close()
+            serverSocket?.close()
             outputStream = null
             sslSocket = null
+            serverSocket = null
             isConnected.value = false
             Log.d(TAG, "Desconectado")
         } catch (e: Exception) {
@@ -133,7 +139,7 @@ class VideoStreamer(
     }
 
     /**
-     * Reintenta la conexión
+     * Restarts the server socket and waits again.
      */
     suspend fun reconnect() {
         disconnect()

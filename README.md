@@ -63,7 +63,7 @@ Consulta [INSTALL.md](INSTALL.md) para instrucciones detalladas de instalación 
 ### Modo WiFi
 
 1. Asegúrate de que tu PC y Android estén en la misma red WiFi
-2. En la app Android, configura la IP de tu PC y el puerto (por defecto 443)
+2. En la app Android, configura la IP de tu PC y el puerto (por defecto 8443)
 3. Inicia la transmisión desde Android
 4. En la app Windows, configura la misma IP y puerto, luego inicia la recepción
 

@@ -9,7 +9,8 @@ import kotlinx.parcelize.Parcelize
 @Parcelize
 data class ConnectionConfig(
     val serverIp: String,
-    val serverPort: Int = 443,
+    // Avoid privileged ports (<1024) on Android.
+    val serverPort: Int = 8443,
     val connectionMode: ConnectionMode = ConnectionMode.WIFI
 ) : Parcelable {
     /**
@@ -47,7 +48,7 @@ data class ConnectionConfig(
         fun default(): ConnectionConfig {
             return ConnectionConfig(
                 serverIp = "192.168.1.100", // IP común de ejemplo
-                serverPort = 443,
+                serverPort = 8443,
                 connectionMode = ConnectionMode.WIFI
             )
         }

@@ -11,7 +11,8 @@ from dataclasses import dataclass, asdict
 class AppConfig:
     """Configuración de la aplicación"""
     server_ip: str = "0.0.0.0"
-    server_port: int = 443
+    # Avoid privileged ports (<1024) on Android.
+    server_port: int = 8443
     connection_mode: str = "wifi"  # "wifi" o "usb"
     certificate_path: Optional[str] = None
     verify_certificate: bool = False  # Para certificados auto-firmados

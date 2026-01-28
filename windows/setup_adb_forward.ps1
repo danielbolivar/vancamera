@@ -2,8 +2,8 @@
 # Conecta el puerto del servidor Windows con el puerto del dispositivo Android
 
 param(
-    [int]$LocalPort = 443,
-    [int]$RemotePort = 443
+    [int]$LocalPort = 8443,
+    [int]$RemotePort = 8443
 )
 
 Write-Host "=== VanCamera ADB Port Forwarding Setup ===" -ForegroundColor Cyan

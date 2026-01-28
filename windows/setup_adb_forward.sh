@@ -2,8 +2,8 @@
 # Script bash para configurar ADB port forwarding (para WSL o Linux)
 # Conecta el puerto del servidor Windows con el puerto del dispositivo Android
 
-LOCAL_PORT=${1:-443}
-REMOTE_PORT=${2:-443}
+LOCAL_PORT=${1:-8443}
+REMOTE_PORT=${2:-8443}
 
 echo "=== VanCamera ADB Port Forwarding Setup ==="
 echo ""

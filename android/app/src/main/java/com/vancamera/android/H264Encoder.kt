@@ -83,6 +83,12 @@ class H264Encoder(private val config: VideoConfig) {
      * Convierte Image YUV420 a formato NV12 (YUV420SemiPlanar)
      */
     private fun convertYUV420ToNV12(image: Image, width: Int, height: Int): ByteArray {
+        // IMPORTANT:
+        // Do NOT use plane.buffer.remaining() sizes here. YUV_420_888 planes often include
+        // row-stride padding, which would create a larger-than-expected array and then
+        // overflow MediaCodec input buffers. NV12 must be tightly packed:
+        // size = width * height * 3 / 2
+
         val yPlane = image.planes[0]
         val uPlane = image.planes[1]
         val vPlane = image.planes[2]
@@ -91,28 +97,40 @@ class H264Encoder(private val config: VideoConfig) {
         val uBuffer = uPlane.buffer
         val vBuffer = vPlane.buffer
 
-        val ySize = yBuffer.remaining()
-        val uSize = uBuffer.remaining()
-        val vSize = vBuffer.remaining()
+        val outSize = width * height * 3 / 2
+        val out = ByteArray(outSize)
 
-        val nv12 = ByteArray(ySize + uSize + vSize)
-
-        // Copiar plano Y
-        yBuffer.get(nv12, 0, ySize)
-
-        // Intercalar planos U y V (NV12 = Y + interleaved UV)
-        val uvSize = uSize + vSize
-        val uvBuffer = ByteArray(uvSize)
-        uBuffer.get(uvBuffer, 0, uSize)
-        vBuffer.get(uvBuffer, uSize, vSize)
-
-        // Intercalar U y V
-        for (i in 0 until uSize) {
-            nv12[ySize + i * 2] = uvBuffer[i] // U
-            nv12[ySize + i * 2 + 1] = uvBuffer[uSize + i] // V
+        // Copy Y plane (luma): width bytes per row.
+        val yRowStride = yPlane.rowStride
+        var outIndex = 0
+        for (row in 0 until height) {
+            val yRowStart = row * yRowStride
+            for (col in 0 until width) {
+                out[outIndex++] = yBuffer.get(yRowStart + col)
+            }
         }
 
-        return nv12
+        // Copy UV planes interleaved (NV12 = U then V), subsampled 2x2.
+        val uRowStride = uPlane.rowStride
+        val vRowStride = vPlane.rowStride
+        val uPixelStride = uPlane.pixelStride
+        val vPixelStride = vPlane.pixelStride
+
+        val chromaHeight = height / 2
+        val chromaWidth = width / 2
+
+        for (row in 0 until chromaHeight) {
+            val uRowStart = row * uRowStride
+            val vRowStart = row * vRowStride
+            for (col in 0 until chromaWidth) {
+                val uIndex = uRowStart + col * uPixelStride
+                val vIndex = vRowStart + col * vPixelStride
+                out[outIndex++] = uBuffer.get(uIndex)
+                out[outIndex++] = vBuffer.get(vIndex)
+            }
+        }
+
+        return out
     }
 
     /**
@@ -129,6 +147,17 @@ class H264Encoder(private val config: VideoConfig) {
                 val inputBuffer = mediaCodec?.getInputBuffer(inputBufferIndex)
                 inputBuffer?.let { buffer ->
                     buffer.clear()
+                    // Guard against BufferOverflowException if encoder input buffers are smaller.
+                    if (frameData.size > buffer.capacity()) {
+                        Log.e(
+                            TAG,
+                            "Frame too large for encoder input buffer. " +
+                                "frameSize=${frameData.size}, capacity=${buffer.capacity()}, " +
+                                "w=$width, h=$height"
+                        )
+                        mediaCodec?.queueInputBuffer(inputBufferIndex, 0, 0, 0, 0)
+                        return@withContext
+                    }
                     buffer.put(frameData)
 
                     val presentationTimeUs = System.nanoTime() / 1000

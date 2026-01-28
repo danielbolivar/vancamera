@@ -29,7 +29,9 @@ class VirtualCamBridge:
                 width=self.width,
                 height=self.height,
                 fps=self.fps,
-                fmt=PixelFormat.RGBA
+                # Use a format that pyvirtualcam supports on Windows.
+                # Our decoder produces RGB frames (rgb24), so RGB is the safest choice.
+                fmt=PixelFormat.RGB
             )
             self.is_running = True
             print(f"Cámara virtual iniciada: {self.width}x{self.height} @ {self.fps}fps")
@@ -44,22 +46,13 @@ class VirtualCamBridge:
         Envía un frame a la cámara virtual
 
         Args:
-            frame: Frame en formato numpy array (RGB o RGBA)
+            frame: Frame en formato numpy array (RGB / RGBA / BGR / BGRA)
         """
         if not self.is_running or not self.camera:
             return
 
         try:
-            # Convertir frame a RGBA si es necesario
-            if frame.shape[2] == 3:  # RGB
-                # Agregar canal alpha
-                rgba_frame = np.zeros((frame.shape[0], frame.shape[1], 4), dtype=np.uint8)
-                rgba_frame[:, :, :3] = frame
-                rgba_frame[:, :, 3] = 255  # Alpha opaco
-                frame = rgba_frame
-            elif frame.shape[2] == 4:  # RGBA
-                pass  # Ya está en formato correcto
-            else:
+            if frame.ndim != 3 or frame.shape[2] not in (3, 4):
                 print(f"Formato de frame no soportado: {frame.shape}")
                 return
 
@@ -69,6 +62,11 @@ class VirtualCamBridge:
                 img = Image.fromarray(frame)
                 img = img.resize((self.width, self.height), Image.Resampling.LANCZOS)
                 frame = np.array(img)
+
+            # Ensure frame is RGB (pyvirtualcam PixelFormat.RGB expects R,G,B bytes).
+            if frame.shape[2] == 4:
+                # Assume RGBA and drop alpha.
+                frame = frame[:, :, :3]
 
             # Enviar frame
             self.camera.send(frame)

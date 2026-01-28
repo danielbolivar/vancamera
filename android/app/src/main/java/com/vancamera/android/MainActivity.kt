@@ -13,7 +13,7 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 
 /**
- * Actividad principal de VanCamera Android
+ * Main activity for VanCamera Android.
  */
 class MainActivity : AppCompatActivity() {
 
@@ -32,7 +32,7 @@ class MainActivity : AppCompatActivity() {
         if (isGranted) {
             initializeCamera()
         } else {
-            Toast.makeText(this, "Se requiere permiso de cámara", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Camera permission is required", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -42,7 +42,7 @@ class MainActivity : AppCompatActivity() {
 
         certificateManager = CertificateManager(this)
 
-        // Verificar permisos
+        // Check permissions.
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
             == PackageManager.PERMISSION_GRANTED) {
             initializeCamera()
@@ -50,7 +50,7 @@ class MainActivity : AppCompatActivity() {
             requestPermissionLauncher.launch(Manifest.permission.CAMERA)
         }
 
-        // Configurar listeners de UI
+        // Configure UI listeners.
         setupUI()
     }
 
@@ -67,7 +67,7 @@ class MainActivity : AppCompatActivity() {
         findViewById<com.google.android.material.button.MaterialButton>(R.id.btnSettings)
             .setOnClickListener {
                 // TODO: Abrir diálogo de configuración
-                Toast.makeText(this, "Configuración próximamente", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Settings coming soon", Toast.LENGTH_SHORT).show()
             }
     }
 
@@ -77,17 +77,20 @@ class MainActivity : AppCompatActivity() {
                 cameraManager = CameraManager(this@MainActivity, this@MainActivity)
                 cameraManager.initialize(videoConfig)
 
-                // Configurar callback para recibir frames
+                // Set callback to receive frames.
                 cameraManager.setFrameCallback { imageProxy ->
                     if (isStreaming) {
-                        h264Encoder.encodeFrame(imageProxy)
+                        // encodeFrame is a suspend function; run it in a coroutine.
+                        lifecycleScope.launch {
+                            h264Encoder.encodeFrame(imageProxy)
+                        }
                     } else {
                         imageProxy.close()
                     }
                 }
             } catch (e: Exception) {
                 Toast.makeText(this@MainActivity,
-                    "Error al inicializar cámara: ${e.message}",
+                    "Failed to initialize camera: ${e.message}",
                     Toast.LENGTH_LONG).show()
             }
         }
@@ -96,7 +99,7 @@ class MainActivity : AppCompatActivity() {
     private fun startStreaming() {
         lifecycleScope.launch {
             try {
-                // Inicializar encoder
+                // Initialize encoder.
                 h264Encoder = H264Encoder(videoConfig).apply {
                     initialize()
                     setEncodedFrameCallback { encodedData ->
@@ -106,7 +109,7 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
-                // Inicializar streamer
+                // Initialize streamer.
                 certificateManager = CertificateManager(this@MainActivity)
                 videoStreamer = VideoStreamer(
                     this@MainActivity,
@@ -114,14 +117,14 @@ class MainActivity : AppCompatActivity() {
                     certificateManager
                 )
 
-                // Conectar
+                // Connect.
                 videoStreamer.connect()
 
                 isStreaming = true
-                Toast.makeText(this@MainActivity, "Streaming iniciado", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@MainActivity, "Streaming started", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
                 Toast.makeText(this@MainActivity,
-                    "Error al iniciar streaming: ${e.message}",
+                    "Failed to start streaming: ${e.message}",
                     Toast.LENGTH_LONG).show()
             }
         }
@@ -133,10 +136,10 @@ class MainActivity : AppCompatActivity() {
                 h264Encoder.release()
                 videoStreamer.disconnect()
                 isStreaming = false
-                Toast.makeText(this@MainActivity, "Streaming detenido", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@MainActivity, "Streaming stopped", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
                 Toast.makeText(this@MainActivity,
-                    "Error al detener streaming: ${e.message}",
+                    "Failed to stop streaming: ${e.message}",
                     Toast.LENGTH_LONG).show()
             }
         }

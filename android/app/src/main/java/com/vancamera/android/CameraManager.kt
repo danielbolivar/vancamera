@@ -10,12 +10,16 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
-import kotlinx.coroutines.tasks.await
+import com.google.common.util.concurrent.ListenableFuture
+import kotlinx.coroutines.suspendCancellableCoroutine
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.Executor
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 /**
- * Gestor de captura de video usando CameraX
+ * Camera capture manager using CameraX.
  */
 class CameraManager(
     private val context: Context,
@@ -30,17 +34,17 @@ class CameraManager(
     private var videoConfig: VideoConfig? = null
 
     /**
-     * Inicializa la cámara con la configuración especificada
+     * Initializes the camera with the provided configuration.
      */
     suspend fun initialize(config: VideoConfig) {
         videoConfig = config
 
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
-        cameraProvider = cameraProviderFuture.await()
+        cameraProvider = cameraProviderFuture.await(ContextCompat.getMainExecutor(context))
 
         val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
 
-        // Configurar análisis de imagen para obtener frames
+        // Configure image analysis to receive frames.
         imageAnalysis = ImageAnalysis.Builder()
             .setTargetResolution(config.resolution)
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
@@ -51,16 +55,16 @@ class CameraManager(
                 }
             }
 
-        // Configurar preview (opcional, para mostrar en UI)
+        // Configure preview (optional; for displaying in UI).
         val preview = Preview.Builder()
             .setTargetResolution(config.resolution)
             .build()
 
         try {
-            // Desvincular todos los casos de uso antes de volver a vincular
+            // Unbind all use cases before rebinding.
             cameraProvider?.unbindAll()
 
-            // Vincular casos de uso a ciclo de vida
+            // Bind use cases to lifecycle.
             camera = cameraProvider?.bindToLifecycle(
                 lifecycleOwner,
                 cameraSelector,
@@ -68,23 +72,21 @@ class CameraManager(
                 imageAnalysis
             )
         } catch (e: Exception) {
-            throw CameraException("Error al inicializar la cámara: ${e.message}", e)
+            throw CameraException("Failed to initialize camera: ${e.message}", e)
         }
     }
 
     /**
-     * Establece el callback para recibir frames de video
+     * Sets the callback to receive video frames.
      */
     fun setFrameCallback(callback: (ImageProxy) -> Unit) {
         frameCallback = callback
     }
 
     /**
-     * Obtiene las resoluciones disponibles para la cámara
-     * Retorna resoluciones comunes soportadas
+     * Returns common supported camera resolutions.
      */
     suspend fun getAvailableResolutions(): List<Size> {
-        // Resoluciones comunes soportadas por la mayoría de dispositivos
         return listOf(
             Size(1280, 720),   // 720p
             Size(1920, 1080),  // 1080p
@@ -94,7 +96,7 @@ class CameraManager(
     }
 
     /**
-     * Cambia entre cámara frontal y trasera
+     * Switches between front and back cameras.
      */
     suspend fun switchCamera() {
         val currentSelector = if (camera?.cameraInfo?.lensFacing == CameraSelector.LENS_FACING_BACK) {
@@ -124,14 +126,14 @@ class CameraManager(
     }
 
     /**
-     * Obtiene el preview use case para mostrar en la UI
+     * Returns the preview use case (if exposed).
      */
     fun getPreviewUseCase(): Preview? {
         return null // Se maneja internamente
     }
 
     /**
-     * Libera los recursos de la cámara
+     * Releases camera resources.
      */
     fun release() {
         frameCallback = null
@@ -142,21 +144,39 @@ class CameraManager(
     }
 
     /**
-     * Verifica si la cámara está inicializada
+     * Returns whether the camera is initialized.
      */
     fun isInitialized(): Boolean {
         return camera != null && cameraProvider != null
     }
 
     /**
-     * Obtiene la configuración actual de video
+     * Returns the current video configuration.
      */
     fun getCurrentConfig(): VideoConfig? {
         return videoConfig
     }
 }
 
+private suspend fun <T> ListenableFuture<T>.await(executor: Executor): T =
+    suspendCancellableCoroutine { cont ->
+        addListener(
+            {
+                try {
+                    cont.resume(get())
+                } catch (t: Throwable) {
+                    cont.resumeWithException(t)
+                }
+            },
+            executor
+        )
+
+        cont.invokeOnCancellation {
+            cancel(true)
+        }
+    }
+
 /**
- * Excepción personalizada para errores de cámara
+ * Custom exception for camera errors.
  */
 class CameraException(message: String, cause: Throwable? = null) : Exception(message, cause)

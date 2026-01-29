@@ -121,6 +121,10 @@ class VideoReceiver:
             if not self.connect():
                 return
 
+        # Reinitialize decoder for fresh connection (ensures clean state)
+        if HAS_AV:
+            self._init_decoder()
+
         self.is_running = True
         self.receive_thread = threading.Thread(target=self._receive_loop, daemon=True)
         self.receive_thread.start()

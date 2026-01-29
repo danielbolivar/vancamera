@@ -48,6 +48,8 @@ class VanCameraApp:
 
         self.is_streaming = False
         self.current_frame: Optional[np.ndarray] = None
+        # Keep reference to prevent garbage collection of PhotoImage
+        self._current_photo: Optional[ImageTk.PhotoImage] = None
 
         self.setup_ui()
 
@@ -190,6 +192,12 @@ class VanCameraApp:
 
     def stop_streaming(self):
         """Detiene la recepción de video"""
+        # Set flag FIRST to stop callbacks from updating UI
+        self.is_streaming = False
+
+        # Clear photo reference
+        self._current_photo = None
+
         if self.video_receiver:
             self.video_receiver.disconnect()
             self.video_receiver = None
@@ -198,10 +206,14 @@ class VanCameraApp:
             self.virtual_cam.stop()
             self.virtual_cam = None
 
-        self.is_streaming = False
         self.start_button.configure(text="Iniciar Recepción")
         self.status_label.configure(text="Desconectado", text_color="red")
-        self.preview_label.configure(image=None, text="Sin conexión")
+
+        # Reset preview safely
+        try:
+            self.preview_label.configure(image="", text="Sin conexión")
+        except Exception:
+            pass  # Ignore if widget has issues
 
     def on_frame_received(self, frame: np.ndarray, orientation_degrees: int = 0):
         """
@@ -250,6 +262,10 @@ class VanCameraApp:
 
     def update_preview(self, frame: np.ndarray):
         """Actualiza el preview en la UI"""
+        # Don't update if not streaming (prevents errors after stopping)
+        if not self.is_streaming:
+            return
+
         try:
             # Convertir a PIL Image
             img = Image.fromarray(frame)
@@ -257,11 +273,19 @@ class VanCameraApp:
             # Redimensionar para preview
             img.thumbnail((640, 360), Image.Resampling.LANCZOS)
 
-            # Convertir a PhotoImage
-            photo = ImageTk.PhotoImage(image=img)
+            # Convertir a PhotoImage and store reference to prevent garbage collection
+            self._current_photo = ImageTk.PhotoImage(image=img)
 
             # Actualizar label (debe hacerse en el hilo principal)
-            self.root.after(0, lambda: self.preview_label.configure(image=photo, text=""))
+            # Use a direct reference to the stored photo
+            def _update_label():
+                if self.is_streaming and self._current_photo:
+                    try:
+                        self.preview_label.configure(image=self._current_photo, text="")
+                    except Exception:
+                        pass  # Ignore errors if widget was destroyed
+
+            self.root.after(0, _update_label)
 
         except Exception as e:
             print(f"Error al actualizar preview: {e}")

@@ -18,13 +18,40 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // Release signing configuration
+    // Keystore credentials are read from environment variables for security
+    signingConfigs {
+        create("release") {
+            val keystorePath = System.getenv("VANCAMERA_KEYSTORE_PATH") 
+                ?: file("keystore/vancamera.jks").absolutePath
+            storeFile = file(keystorePath)
+            storePassword = System.getenv("VANCAMERA_KEYSTORE_PASSWORD") ?: ""
+            keyAlias = System.getenv("VANCAMERA_KEY_ALIAS") ?: "vancamera"
+            keyPassword = System.getenv("VANCAMERA_KEY_PASSWORD") ?: ""
+        }
+    }
+
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // Use release signing config if keystore exists
+            val keystoreFile = file(
+                System.getenv("VANCAMERA_KEYSTORE_PATH") 
+                    ?: "keystore/vancamera.jks"
+            )
+            if (keystoreFile.exists()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
+        debug {
+            isMinifyEnabled = false
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
         }
     }
     compileOptions {

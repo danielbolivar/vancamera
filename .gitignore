@@ -1,19 +1,137 @@
-__pycache__
-./windows/__pycache__/*
-./windows/__pycache__/*.pyc
-./android/__pycache__/*
-./android/__pycache__/*.pyc
-./android/app/__pycache__/*
-./android/app/__pycache__/*.pyc
-.idea
-.vscode
+# ===========================================
+# OS Generated Files
+# ===========================================
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ===========================================
+# IDE / Editors
+# ===========================================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.iml
+*.sublime-project
+*.sublime-workspace
+
+# ===========================================
+# Python / Windows App
+# ===========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv/
+windows/build/venv/
+
+# PyInstaller
+*.manifest
+*.spec.bak
+windows/build/build/
+windows/build/dist/
+windows/build/Output/
+
+# External dependencies (downloaded during build)
+windows/build/deps/platform-tools/
+windows/build/deps/*.exe
+windows/build/deps/*.zip
+
+# ===========================================
+# Android
+# ===========================================
+# Gradle
+.gradle/
+**/build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# Local configuration
+local.properties
+
+# Android Studio
+*.iml
+.idea/caches/
+.idea/libraries/
+.idea/modules.xml
+.idea/workspace.xml
+.idea/navEditor.xml
+.idea/assetWizardSettings.xml
+.idea/dictionaries/
+.idea/vcs.xml
+.idea/gradle.xml
+.idea/misc.xml
+
+# Android build
+.externalNativeBuild/
+.cxx/
+/captures
+
+# Signing (NEVER commit!)
+*.jks
+*.keystore
+android/app/keystore/
+signing.properties
+
+# Generated files
+*.apk
+*.ap_
+*.aab
+*.dex
+*.class
+gen/
+out/
+
+# NDK
+obj/
+.externalNativeBuild/
+
+# ===========================================
+# Environment & Secrets
+# ===========================================
 .env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-.env.development
-.env.test
-.env.production
+.env.*
+*.local
+secrets.json
+credentials.json
+
+# ===========================================
+# Logs & Temporary
+# ===========================================
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+logs/
+tmp/
+temp/
+
+# Project specific
 final_review_gate.py

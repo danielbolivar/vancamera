@@ -59,7 +59,32 @@ python main.py
 | [WiFi Connection](docs/CONNECTION_WIFI.md) | How WiFi mode works |
 | [Install Android](docs/INSTALL_ANDROID.md) | Android setup guide |
 | [Install Windows](docs/INSTALL_WINDOWS.md) | Windows setup guide |
+| [Build Android](docs/BUILD_ANDROID.md) | Building Android APK from source |
+| [Build Windows](docs/BUILD_WINDOWS.md) | Building Windows installer from source |
 | [Troubleshooting](docs/TROUBLESHOOTING.md) | Common issues and fixes |
+
+## Building from Source
+
+Want to build the installers yourself? See the build documentation:
+
+| Platform | Build Guide | Output |
+|----------|-------------|--------|
+| Windows | [BUILD_WINDOWS.md](docs/BUILD_WINDOWS.md) | `VanCamera-Setup-x.x.x.exe` |
+| Android | [BUILD_ANDROID.md](docs/BUILD_ANDROID.md) | `app-release.apk` |
+
+### Quick Build Commands
+
+**Windows:**
+```powershell
+cd windows\build
+.\build_release.ps1
+```
+
+**Android:**
+```bash
+cd android
+./build_release.sh
+```
 
 ## Requirements
 

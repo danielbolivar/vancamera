@@ -3,11 +3,14 @@ package com.vancamera.android
 import android.content.Context
 import android.util.Size
 import android.view.Surface
+import androidx.camera.core.AspectRatio
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
+import androidx.camera.core.resolutionselector.AspectRatioStrategy
+import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
@@ -54,9 +57,20 @@ class CameraManager(
 
         val targetRotation = previewView?.display?.rotation ?: Surface.ROTATION_0
 
+        // Use ResolutionSelector with 16:9 aspect ratio to get full field of view
+        // without excessive cropping. This matches the encoder's expected aspect ratio.
+        val resolutionSelector = ResolutionSelector.Builder()
+            .setAspectRatioStrategy(
+                AspectRatioStrategy(
+                    AspectRatio.RATIO_16_9,
+                    AspectRatioStrategy.FALLBACK_RULE_AUTO
+                )
+            )
+            .build()
+
         // Configure image analysis to receive frames.
         imageAnalysis = ImageAnalysis.Builder()
-            .setTargetResolution(config.resolution)
+            .setResolutionSelector(resolutionSelector)
             .setTargetRotation(targetRotation)
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .build()
@@ -68,7 +82,7 @@ class CameraManager(
 
         // Configure preview (optional; for displaying in UI).
         preview = Preview.Builder()
-            .setTargetResolution(config.resolution)
+            .setResolutionSelector(resolutionSelector)
             .setTargetRotation(targetRotation)
             .build()
             .also { p ->

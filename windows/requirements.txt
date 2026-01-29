@@ -16,5 +16,8 @@ pyvirtualcam>=0.11.0
 # Networking y seguridad
 cryptography>=41.0.0
 
+# Device discovery
+zeroconf>=0.131.0
+
 # Utilidades
 numpy>=1.24.0

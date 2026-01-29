@@ -1,113 +1,82 @@
 # VanCamera
 
-Sistema Open Source y seguro que permite usar la cámara de un celular Android como webcam de alta calidad y baja latencia para Windows, compatible nativamente con Discord, sin depender de software comercial pesado o con publicidad.
+Use your Android phone as a high-quality, low-latency webcam for Windows. Secure, open-source, works natively with Discord, Zoom, and Teams.
 
-## Filosofía
+## Features
 
-"Do It Yourself" (Hazlo tú mismo), priorizando el control sobre los datos, la seguridad en redes públicas (como la de la universidad) y la eficiencia del código.
+- **Auto-Discovery** - Devices appear automatically (USB and WiFi)
+- **Low Latency** - Hardware H.264 encoding, optimized for real-time
+- **Secure** - TLS 1.3 encryption, safe for public networks
+- **Native** - Works with any DirectShow app (Discord, Zoom, Teams)
+- **Simple** - One-click connect, no configuration needed
 
-## Características
+## Quick Start
 
-- **Alta Calidad**: Codificación H.264 por hardware en Android
-- **Baja Latencia**: Protocolo TCP optimizado con TLS 1.3
-- **Seguro**: Cifrado de grado militar para redes públicas
-- **Flexible**: Soporte para conexión WiFi y USB (ADB)
-- **Nativo**: Compatible con Discord, Zoom, Teams y cualquier aplicación que use DirectShow
+### 1. Install Prerequisites
 
-## Arquitectura
+**Windows:**
+- Install [OBS-VirtualCam Legacy v2.0.5](https://github.com/Fenrirthviti/obs-virtual-cam/releases/tag/v2.0.5)
+- Install [Python 3.8+](https://www.python.org/downloads/)
+- Install [ADB](https://developer.android.com/studio/releases/platform-tools) (for USB mode)
 
-El sistema consta de dos componentes:
+**Android:**
+- Build and install the app from `android/` folder
 
-1. **App Android (Kotlin)**: Captura video, codifica H.264, transmite vía TLS 1.3
-2. **App Windows (Python)**: Recibe video, decodifica, muestra preview y alimenta OBS-VirtualCam
+### 2. Run
 
-## Requisitos
+**Android:**
+1. Launch VanCamera
+2. Tap "Start streaming"
+
+**Windows:**
+```powershell
+cd windows
+pip install -r requirements.txt
+python main.py
+```
+
+### 3. Connect
+
+1. Select your device from the dropdown
+2. Click "Start Receiving"
+3. Open Discord/Zoom → Select "OBS-Camera"
+
+## Connection Modes
+
+| Mode | Best For | Setup |
+|------|----------|-------|
+| **USB** | Lowest latency, most reliable | Connect USB cable, enable USB debugging |
+| **WiFi** | Wireless freedom | Same network, device appears when streaming |
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Architecture](docs/ARCHITECTURE.md) | System overview and components |
+| [Design Decisions](docs/DESIGN_DECISIONS.md) | Why we chose TLS, H.264, etc. |
+| [Protocol](docs/PROTOCOL.md) | Wire protocol specification |
+| [USB Connection](docs/CONNECTION_USB.md) | How USB mode works |
+| [WiFi Connection](docs/CONNECTION_WIFI.md) | How WiFi mode works |
+| [Install Android](docs/INSTALL_ANDROID.md) | Android setup guide |
+| [Install Windows](docs/INSTALL_WINDOWS.md) | Windows setup guide |
+| [Troubleshooting](docs/TROUBLESHOOTING.md) | Common issues and fixes |
+
+## Requirements
 
 ### Android
-- Android 7.0 (API 24) o superior
-- Cámara frontal o trasera funcional
-- Conexión WiFi o USB con ADB habilitado
+- Android 7.0+ (API 24)
+- Camera (front or back)
 
 ### Windows
-- Windows 10 o superior
-- Python 3.8 o superior
-- OBS-VirtualCam Standalone (Legacy v2.0.5) instalado
-- ADB instalado (para modo USB)
+- Windows 10+
+- Python 3.8+
+- OBS-VirtualCam Legacy v2.0.5
+- ADB (for USB mode)
 
-## Instalación Rápida
+## License
 
-### 1. Instalar OBS-VirtualCam
+MIT License - See [LICENSE](LICENSE)
 
-Consulta [INSTALL.md](INSTALL.md) para instrucciones detalladas de instalación del driver virtual camera.
+## Contributing
 
-### 2. Configurar App Android
-
-1. Abre el proyecto en Android Studio
-2. Sincroniza las dependencias Gradle
-3. Compila e instala en tu dispositivo Android
-
-### 3. Configurar App Windows
-
-1. Navega al directorio `windows/`
-2. Instala dependencias:
-   ```powershell
-   pip install -r requirements.txt
-   ```
-3. Ejecuta la aplicación:
-   ```powershell
-   python main.py
-   ```
-
-## Uso
-
-### Modo WiFi
-
-1. Asegúrate de que tu PC y Android estén en la misma red WiFi
-2. En la app Android, configura la IP de tu PC y el puerto (por defecto 8443)
-3. Inicia la transmisión desde Android
-4. En la app Windows, configura la misma IP y puerto, luego inicia la recepción
-
-### Modo USB
-
-1. Conecta tu Android a la PC vía USB
-2. Habilita depuración USB en Android
-3. Ejecuta el script de port forwarding:
-   ```powershell
-   .\windows\setup_adb_forward.ps1
-   ```
-4. En ambas apps, selecciona modo "USB"
-5. Inicia la transmisión desde Android y la recepción desde Windows
-
-## Configuración de Video
-
-La app Android permite configurar:
-- **Resolución**: 720p, 1080p (según disponibilidad del dispositivo)
-- **FPS**: 30, 60 fps
-- **Bitrate**: Ajustable según calidad deseada
-
-Presets disponibles:
-- 720p @ 30fps (recomendado para WiFi)
-- 720p @ 60fps (más fluido)
-- 1080p @ 30fps (máxima calidad)
-
-## Seguridad
-
-VanCamera usa TLS 1.3 para cifrar toda la comunicación. Los certificados se generan automáticamente en la primera ejecución y se comparten entre Android y Windows mediante QR code o archivo.
-
-## Solución de Problemas
-
-Consulta [TROUBLESHOOTING.md](TROUBLESHOOTING.md) para soluciones a problemas comunes.
-
-## Contribuir
-
-Este es un proyecto Open Source. Las contribuciones son bienvenidas.
-
-## Licencia
-
-[Especificar licencia]
-
-## Créditos
-
-- OBS-VirtualCam: Driver de cámara virtual
-- CameraX: API de captura de video en Android
-- MediaCodec: Codificación hardware H.264
+Contributions welcome! Please read the architecture docs before submitting PRs.

@@ -31,6 +31,9 @@ class VideoStreamer(
     private val isConnected = MutableStateFlow(false)
     private val connectionState: StateFlow<Boolean> = isConnected
 
+    // mDNS service publisher for WiFi discovery
+    private val nsdPublisher = NsdServicePublisher(context)
+
     /**
      * Observable connection state.
      */
@@ -60,6 +63,9 @@ class VideoStreamer(
             ss.bind(InetSocketAddress(connectionConfig.serverPort))
 
             serverSocket = ss
+
+            // Publish mDNS service so Windows can discover us
+            nsdPublisher.publishService(connectionConfig.serverPort)
 
             // Accept a single client connection.
             val socket = ss.accept() as SSLSocket
@@ -171,6 +177,10 @@ class VideoStreamer(
      */
     suspend fun disconnect() = withContext(Dispatchers.IO) {
         Log.d(TAG, "Disconnecting...")
+
+        // Unpublish mDNS service
+        nsdPublisher.unpublishService()
+
         closeAllSockets()
         isConnected.value = false
         Log.d(TAG, "Disconnected")

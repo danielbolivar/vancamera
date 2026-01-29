@@ -57,6 +57,20 @@ def has_ready_usb_device() -> bool:
     return any(d.status == "device" for d in list_connected_devices())
 
 
+def get_device_name(serial: str) -> str:
+    """
+    Gets the friendly device name (model) for a given serial.
+    Returns the serial if the name cannot be retrieved.
+    """
+    if not adb_is_available():
+        return serial
+
+    proc = _run_adb(["adb", "-s", serial, "shell", "getprop", "ro.product.model"], timeout_s=5)
+    if proc.returncode == 0 and proc.stdout.strip():
+        return proc.stdout.strip()
+    return serial
+
+
 def ensure_port_forward(local_port: int, remote_port: int) -> bool:
     """
     Creates/refreshes adb port forwarding.

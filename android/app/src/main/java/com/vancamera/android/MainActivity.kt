@@ -121,12 +121,6 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             }
-
-        findViewById<com.google.android.material.button.MaterialButton>(R.id.btnSettings)
-            .setOnClickListener {
-                // TODO: Abrir diálogo de configuración
-                Toast.makeText(this, "Settings coming soon", Toast.LENGTH_SHORT).show()
-            }
     }
 
     private fun initializeCamera() {

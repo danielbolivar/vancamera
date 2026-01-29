@@ -5,12 +5,13 @@ import customtkinter as ctk
 import numpy as np
 from PIL import Image, ImageTk
 import threading
-from typing import Optional
+from typing import Optional, List
 from video_receiver import VideoReceiver
 from virtual_cam_bridge import VirtualCamBridge
 from certificate_handler import CertificateHandler
 from config_manager import ConfigManager, AppConfig
-from adb_forward import ensure_port_forward, has_ready_usb_device, adb_is_available, list_connected_devices
+from adb_forward import ensure_port_forward
+from device_discovery import DeviceDiscovery, DiscoveredDevice
 
 
 class VanCameraApp:
@@ -26,17 +27,6 @@ class VanCameraApp:
 
         self.config_manager = ConfigManager()
         self.config = self.config_manager.load()
-
-        # Auto USB setup: if a device is connected over USB, setup adb port forwarding
-        # so the user does not need to run setup_adb_forward.ps1 manually.
-        #
-        # Note: adb must be installed and on PATH for this to work.
-        if has_ready_usb_device():
-            if ensure_port_forward(local_port=self.config.server_port, remote_port=self.config.server_port):
-                # For USB forwarding, the destination is local.
-                self.config.server_ip = "127.0.0.1"
-                self.config.connection_mode = "usb"
-                self.config_manager.save(self.config)
 
         self.cert_handler = CertificateHandler()
         if self.config.certificate_path:
@@ -54,7 +44,15 @@ class VanCameraApp:
         # Frame dropping for low latency - track if UI update is pending
         self._ui_update_pending = False
 
+        # Device discovery
+        self.device_discovery = DeviceDiscovery()
+        self.device_discovery.on_devices_changed(self._on_devices_changed)
+        self._selected_device: Optional[DiscoveredDevice] = None
+
         self.setup_ui()
+
+        # Start device discovery after UI is set up
+        self.device_discovery.start()
 
     def setup_ui(self):
         """Sets up the user interface"""
@@ -75,19 +73,27 @@ class VanCameraApp:
         controls_frame = ctk.CTkFrame(main_frame)
         controls_frame.pack(fill="x", pady=10)
 
-        # Connection settings
-        conn_frame = ctk.CTkFrame(controls_frame)
-        conn_frame.pack(fill="x", padx=10, pady=5)
+        # Device selection
+        device_frame = ctk.CTkFrame(controls_frame)
+        device_frame.pack(fill="x", padx=10, pady=5)
 
-        ctk.CTkLabel(conn_frame, text="Android IP:").pack(side="left", padx=5)
-        self.ip_entry = ctk.CTkEntry(conn_frame, width=150)
-        self.ip_entry.insert(0, self.config.server_ip)
-        self.ip_entry.pack(side="left", padx=5)
+        ctk.CTkLabel(device_frame, text="Device:").pack(side="left", padx=5)
 
-        ctk.CTkLabel(conn_frame, text="Port:").pack(side="left", padx=5)
-        self.port_entry = ctk.CTkEntry(conn_frame, width=80)
-        self.port_entry.insert(0, str(self.config.server_port))
-        self.port_entry.pack(side="left", padx=5)
+        self.device_dropdown = ctk.CTkComboBox(
+            device_frame,
+            width=300,
+            values=["Searching for devices..."],
+            state="readonly",
+            command=self._on_device_selected
+        )
+        self.device_dropdown.pack(side="left", padx=5)
+
+        ctk.CTkButton(
+            device_frame,
+            text="Refresh",
+            command=self._refresh_devices,
+            width=80
+        ).pack(side="left", padx=5)
 
         # Buttons
         button_frame = ctk.CTkFrame(controls_frame)
@@ -101,20 +107,54 @@ class VanCameraApp:
         )
         self.start_button.pack(side="left", padx=5)
 
-        ctk.CTkButton(
-            button_frame,
-            text="Settings",
-            command=self.open_settings,
-            width=150
-        ).pack(side="left", padx=5)
-
         # Status
         self.status_label = ctk.CTkLabel(
             controls_frame,
-            text="Disconnected",
-            text_color="red"
+            text="Searching for devices...",
+            text_color="gray"
         )
         self.status_label.pack(pady=5)
+
+    def _on_devices_changed(self, devices: List[DiscoveredDevice]):
+        """Called when the list of discovered devices changes."""
+        # Update dropdown on the main thread
+        self.root.after(0, lambda: self._update_device_dropdown(devices))
+
+    def _update_device_dropdown(self, devices: List[DiscoveredDevice]):
+        """Updates the device dropdown with discovered devices."""
+        if not devices:
+            self.device_dropdown.configure(values=["No devices found"])
+            self.device_dropdown.set("No devices found")
+            self._selected_device = None
+            if not self.is_streaming:
+                self.status_label.configure(text="No devices found", text_color="gray")
+            return
+
+        # Build list of display names
+        display_names = [d.display_name for d in devices]
+        self.device_dropdown.configure(values=display_names)
+
+        # If no device selected, select the first one
+        current_selection = self.device_dropdown.get()
+        if current_selection not in display_names:
+            self.device_dropdown.set(display_names[0])
+            self._selected_device = devices[0]
+
+        if not self.is_streaming:
+            self.status_label.configure(
+                text=f"{len(devices)} device(s) found",
+                text_color="gray"
+            )
+
+    def _on_device_selected(self, selection: str):
+        """Called when user selects a device from dropdown."""
+        device = self.device_discovery.get_device_by_display_name(selection)
+        self._selected_device = device
+
+    def _refresh_devices(self):
+        """Forces a refresh of the device list."""
+        self.status_label.configure(text="Refreshing...", text_color="gray")
+        self.device_discovery.refresh()
 
     def toggle_streaming(self):
         """Starts or stops video reception"""
@@ -126,41 +166,42 @@ class VanCameraApp:
     def start_streaming(self):
         """Starts video reception"""
         try:
-            # Get UI configuration
-            ip = self.ip_entry.get()
-            port = int(self.port_entry.get())
+            # Get selected device
+            if not self._selected_device:
+                self.status_label.configure(
+                    text="No device selected",
+                    text_color="red"
+                )
+                return
 
-            # Diagnose ADB status
-            if not adb_is_available():
-                print("ADB: Not found in PATH. Install Android SDK Platform Tools and add to PATH.")
-            else:
-                devices = list_connected_devices()
-                if not devices:
-                    print("ADB: No devices found. Connect phone via USB and enable USB debugging.")
-                else:
-                    print(f"ADB: Found devices: {[(d.serial, d.status) for d in devices]}")
+            device = self._selected_device
+            ip = device.address
+            port = device.port
 
-            # If a USB device is available, ensure adb port forwarding is active on this port.
-            # This makes `adb forward tcp:port tcp:port` effectively persistent for each session.
-            if has_ready_usb_device():
-                print(f"ADB: Setting up port forward tcp:{port} -> tcp:{port}...")
+            print(f"Connecting to {device.name} ({device.type}) at {ip}:{port}")
+
+            # For USB devices, ensure ADB port forwarding is set up
+            if device.type == "usb":
+                # Extract serial from device ID (format: "usb:SERIAL")
+                serial = device.id.replace("usb:", "")
+                print(f"ADB: Setting up port forward tcp:{port} -> tcp:{port} for {serial}...")
+
                 if ensure_port_forward(local_port=port, remote_port=port):
                     print("ADB: Port forward established successfully")
-                    # For USB forwarding, the destination is always the local loopback.
-                    ip = "127.0.0.1"
-                    # Persist this choice so next launch reuses it.
                     self.config.connection_mode = "usb"
                 else:
                     print("ADB: Port forward FAILED")
                     self.status_label.configure(
-                        text="Error: could not setup ADB port forward (check adb/USB)",
+                        text="Error: could not setup ADB port forward",
                         text_color="red",
                     )
                     return
             else:
-                print(f"ADB: No ready USB device. Will try direct connection to {ip}:{port}")
+                # WiFi connection
+                self.config.connection_mode = "wifi"
+                print(f"WiFi: Direct connection to {ip}:{port}")
 
-            # Update configuration (IP may have changed if using USB)
+            # Update configuration
             self.config.server_ip = ip
             self.config.server_port = port
             self.config_manager.save(self.config)
@@ -180,12 +221,19 @@ class VanCameraApp:
                 self.status_label.configure(text="Error: OBS-VirtualCam not available", text_color="red")
                 return
 
+            # Update UI to show connecting status
+            self.status_label.configure(text=f"Connecting to {device.name}...", text_color="gray")
+            self.root.update()
+
             # Connect and start receiving
             if self.video_receiver.connect():
                 self.video_receiver.start_receiving()
                 self.is_streaming = True
                 self.start_button.configure(text="Stop Receiving")
-                self.status_label.configure(text="Connected", text_color="green")
+                self.status_label.configure(
+                    text=f"Connected to {device.name}",
+                    text_color="green"
+                )
             else:
                 self.status_label.configure(text="Connection error", text_color="red")
                 self.virtual_cam.stop()
@@ -336,38 +384,10 @@ class VanCameraApp:
             self._ui_update_pending = False  # Reset on error
             print(f"Error updating preview: {e}")
 
-    def open_settings(self):
-        """Opens settings window"""
-        settings_window = ctk.CTkToplevel(self.root)
-        settings_window.title("Settings")
-        settings_window.geometry("400x300")
-
-        # Additional configuration options can be added here
-        ctk.CTkLabel(settings_window, text="VanCamera Settings").pack(pady=10)
-
-        # Certificate path
-        cert_frame = ctk.CTkFrame(settings_window)
-        cert_frame.pack(fill="x", padx=10, pady=5)
-
-        ctk.CTkLabel(cert_frame, text="Certificate path:").pack(side="left", padx=5)
-        cert_entry = ctk.CTkEntry(cert_frame, width=200)
-        if self.config.certificate_path:
-            cert_entry.insert(0, self.config.certificate_path)
-        cert_entry.pack(side="left", padx=5)
-
-        def save_settings():
-            cert_path = cert_entry.get()
-            if cert_path:
-                self.config.certificate_path = cert_path
-                self.config_manager.save(self.config)
-                self.cert_handler.load_certificate(cert_path)
-            settings_window.destroy()
-
-        ctk.CTkButton(settings_window, text="Save", command=save_settings).pack(pady=10)
-
     def run(self):
         """Runs the application"""
         self.root.mainloop()
 
         # Cleanup on close
         self.stop_streaming()
+        self.device_discovery.stop()

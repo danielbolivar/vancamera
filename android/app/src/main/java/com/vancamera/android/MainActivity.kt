@@ -92,9 +92,9 @@ class MainActivity : AppCompatActivity() {
                 // Camera sensor outputs landscape when phone is portrait, so we offset by 90°.
                 currentOrientationDegrees = when {
                     orientation >= 315 || orientation < 45 -> 90     // Portrait → rotate 90°
-                    orientation >= 45 && orientation < 135 -> 0      // Landscape (right) → no rotation
+                    orientation >= 45 && orientation < 135 -> 180    // Landscape (top-left) → rotate 180°
                     orientation >= 135 && orientation < 225 -> 270   // Portrait upside-down → rotate 270°
-                    orientation >= 225 && orientation < 315 -> 180   // Landscape (left) → rotate 180°
+                    orientation >= 225 && orientation < 315 -> 0     // Landscape (top-right) → no rotation
                     else -> 90
                 }
             }

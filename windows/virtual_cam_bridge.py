@@ -43,7 +43,8 @@ class VirtualCamBridge:
 
     def send_frame(self, frame: np.ndarray):
         """
-        Envía un frame a la cámara virtual
+        Envía un frame a la cámara virtual.
+        Maintains aspect ratio using letterboxing (black bars) when needed.
 
         Args:
             frame: Frame en formato numpy array (RGB / RGBA / BGR / BGRA)
@@ -56,17 +57,36 @@ class VirtualCamBridge:
                 print(f"Formato de frame no soportado: {frame.shape}")
                 return
 
-            # Redimensionar si es necesario
-            if frame.shape[0] != self.height or frame.shape[1] != self.width:
-                from PIL import Image
-                img = Image.fromarray(frame)
-                img = img.resize((self.width, self.height), Image.Resampling.LANCZOS)
-                frame = np.array(img)
-
             # Ensure frame is RGB (pyvirtualcam PixelFormat.RGB expects R,G,B bytes).
             if frame.shape[2] == 4:
                 # Assume RGBA and drop alpha.
                 frame = frame[:, :, :3]
+
+            # Handle resize with aspect ratio preservation (letterboxing/pillarboxing)
+            frame_h, frame_w = frame.shape[:2]
+
+            if frame_h != self.height or frame_w != self.width:
+                from PIL import Image
+
+                # Calculate scaling to fit within target dimensions while preserving aspect ratio
+                scale_w = self.width / frame_w
+                scale_h = self.height / frame_h
+                scale = min(scale_w, scale_h)
+
+                new_w = int(frame_w * scale)
+                new_h = int(frame_h * scale)
+
+                # Resize the frame
+                img = Image.fromarray(frame)
+                img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+                # Create black canvas at target size and paste resized image centered
+                canvas = Image.new('RGB', (self.width, self.height), (0, 0, 0))
+                paste_x = (self.width - new_w) // 2
+                paste_y = (self.height - new_h) // 2
+                canvas.paste(img, (paste_x, paste_y))
+
+                frame = np.array(canvas)
 
             # Enviar frame
             self.camera.send(frame)

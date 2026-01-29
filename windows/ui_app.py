@@ -10,7 +10,7 @@ from video_receiver import VideoReceiver
 from virtual_cam_bridge import VirtualCamBridge
 from certificate_handler import CertificateHandler
 from config_manager import ConfigManager, AppConfig
-from adb_forward import ensure_port_forward, has_ready_usb_device
+from adb_forward import ensure_port_forward, has_ready_usb_device, adb_is_available, list_connected_devices
 
 
 class VanCameraApp:
@@ -125,20 +125,35 @@ class VanCameraApp:
             ip = self.ip_entry.get()
             port = int(self.port_entry.get())
 
+            # Diagnose ADB status
+            if not adb_is_available():
+                print("ADB: Not found in PATH. Install Android SDK Platform Tools and add to PATH.")
+            else:
+                devices = list_connected_devices()
+                if not devices:
+                    print("ADB: No devices found. Connect phone via USB and enable USB debugging.")
+                else:
+                    print(f"ADB: Found devices: {[(d.serial, d.status) for d in devices]}")
+
             # If a USB device is available, ensure adb port forwarding is active on this port.
             # This makes `adb forward tcp:port tcp:port` effectively persistent for each session.
             if has_ready_usb_device():
+                print(f"ADB: Setting up port forward tcp:{port} -> tcp:{port}...")
                 if ensure_port_forward(local_port=port, remote_port=port):
+                    print("ADB: Port forward established successfully")
                     # For USB forwarding, the destination is always the local loopback.
                     ip = "127.0.0.1"
                     # Persist this choice so next launch reuses it.
                     self.config.connection_mode = "usb"
                 else:
+                    print("ADB: Port forward FAILED")
                     self.status_label.configure(
                         text="Error: could not setup ADB port forward (check adb/USB)",
                         text_color="red",
                     )
                     return
+            else:
+                print(f"ADB: No ready USB device. Will try direct connection to {ip}:{port}")
 
             # Actualizar configuración (IP puede haber cambiado si usamos USB)
             self.config.server_ip = ip
@@ -188,16 +203,50 @@ class VanCameraApp:
         self.status_label.configure(text="Desconectado", text_color="red")
         self.preview_label.configure(image=None, text="Sin conexión")
 
-    def on_frame_received(self, frame: np.ndarray):
-        """Callback cuando se recibe un frame"""
-        self.current_frame = frame
+    def on_frame_received(self, frame: np.ndarray, orientation_degrees: int = 0):
+        """
+        Callback cuando se recibe un frame.
+
+        Args:
+            frame: Decoded video frame (RGB numpy array)
+            orientation_degrees: Device orientation (0, 90, 180, 270)
+        """
+        # Rotate frame based on orientation from Android device
+        rotated_frame = self._rotate_frame(frame, orientation_degrees)
+        self.current_frame = rotated_frame
 
         # Enviar a cámara virtual
         if self.virtual_cam:
-            self.virtual_cam.send_frame(frame)
+            self.virtual_cam.send_frame(rotated_frame)
 
         # Actualizar preview en UI
-        self.update_preview(frame)
+        self.update_preview(rotated_frame)
+
+    def _rotate_frame(self, frame: np.ndarray, orientation_degrees: int) -> np.ndarray:
+        """
+        Rotate frame based on device orientation.
+
+        Args:
+            frame: Input frame
+            orientation_degrees: 0 (landscape), 90 (portrait right), 180 (landscape upside-down), 270 (portrait left)
+
+        Returns:
+            Rotated frame
+        """
+        if orientation_degrees == 0:
+            # Landscape - no rotation needed
+            return frame
+        elif orientation_degrees == 90:
+            # Portrait (phone rotated right) - rotate frame 90° counter-clockwise
+            return np.rot90(frame, k=1)
+        elif orientation_degrees == 180:
+            # Upside-down landscape - rotate 180°
+            return np.rot90(frame, k=2)
+        elif orientation_degrees == 270:
+            # Portrait (phone rotated left) - rotate frame 90° clockwise
+            return np.rot90(frame, k=3)
+        else:
+            return frame
 
     def update_preview(self, frame: np.ndarray):
         """Actualiza el preview en la UI"""

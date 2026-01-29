@@ -35,7 +35,8 @@ class VideoReceiver:
         self.socket: Optional[socket.socket] = None
         self.ssl_socket: Optional[ssl.SSLSocket] = None
         self.is_running = False
-        self.frame_callback: Optional[Callable[[np.ndarray], None]] = None
+        # Callback now receives (frame, orientation_degrees)
+        self.frame_callback: Optional[Callable[[np.ndarray, int], None]] = None
         self.receive_thread: Optional[threading.Thread] = None
 
         # Decodificador H.264
@@ -126,7 +127,6 @@ class VideoReceiver:
 
     def _receive_loop(self):
         """Loop principal de recepción de datos"""
-        buffer = bytearray()
 
         while self.is_running and self.ssl_socket:
             try:
@@ -137,13 +137,23 @@ class VideoReceiver:
 
                 packet_size = struct.unpack('>I', size_data)[0]
 
-                # Leer datos del paquete
+                # Leer datos del paquete (includes orientation byte + H.264 data)
                 packet_data = self._receive_exact(packet_size)
                 if not packet_data:
                     break
 
+                # Parse orientation byte (first byte)
+                # Protocol: [1 byte orientation][H.264 data]
+                # orientation: 0=0°, 1=90°, 2=180°, 3=270°
+                if len(packet_data) < 2:
+                    continue  # Invalid packet
+
+                orientation_byte = packet_data[0]
+                orientation_degrees = orientation_byte * 90  # Convert to degrees
+                h264_data = packet_data[1:]
+
                 # Decodificar frame
-                self._decode_frame(packet_data)
+                self._decode_frame(h264_data, orientation_degrees)
 
             except Exception as e:
                 print(f"Error en loop de recepción: {e}")
@@ -172,7 +182,7 @@ class VideoReceiver:
 
         return bytes(data)
 
-    def _decode_frame(self, h264_data: bytes):
+    def _decode_frame(self, h264_data: bytes, orientation_degrees: int = 0):
         """Decodifica un frame H.264 usando PyAV"""
         if not self.frame_callback:
             return
@@ -194,9 +204,9 @@ class VideoReceiver:
                 # Convert frame to numpy array in RGB format
                 frame_array = frame.to_ndarray(format='rgb24')
 
-                # Call callback with decoded frame
+                # Call callback with decoded frame and orientation
                 if self.frame_callback:
-                    self.frame_callback(frame_array)
+                    self.frame_callback(frame_array, orientation_degrees)
 
         except (InvalidDataError, FFmpegError) as e:
             self.decode_error_count += 1
@@ -211,8 +221,14 @@ class VideoReceiver:
         except Exception as e:
             print(f"Unexpected decode error: {e}")
 
-    def set_frame_callback(self, callback: Callable[[np.ndarray], None]):
-        """Establece el callback para recibir frames decodificados"""
+    def set_frame_callback(self, callback: Callable[[np.ndarray, int], None]):
+        """
+        Establece el callback para recibir frames decodificados.
+
+        Args:
+            callback: Function that receives (frame: np.ndarray, orientation_degrees: int)
+                      orientation_degrees: 0, 90, 180, or 270
+        """
         self.frame_callback = callback
 
     def is_connected(self) -> bool:

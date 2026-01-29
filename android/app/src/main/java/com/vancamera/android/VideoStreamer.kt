@@ -95,21 +95,38 @@ class VideoStreamer(
     }
 
     /**
-     * Envía datos de video codificados.
+     * Envía datos de video codificados con metadatos de orientación.
+     * @param data H.264 encoded frame data
+     * @param orientationDegrees Device orientation in degrees (0, 90, 180, 270)
      * Returns true if sent successfully, false if connection was lost.
+     *
+     * Protocol: [4 bytes: total size][1 byte: orientation][H.264 data]
+     * - orientation byte: 0=0°, 1=90°, 2=180°, 3=270°
      */
-    suspend fun sendVideoData(data: ByteArray): Boolean = withContext(Dispatchers.IO) {
+    suspend fun sendVideoData(data: ByteArray, orientationDegrees: Int = 0): Boolean = withContext(Dispatchers.IO) {
         if (!isConnected.value || outputStream == null) {
             Log.w(TAG, "No active connection, ignoring data")
             return@withContext false
         }
 
         try {
-            // Send packet size (4 bytes, big-endian)
-            val sizeBytes = intToByteArray(data.size)
+            // Convert degrees to orientation byte (0, 1, 2, 3)
+            val orientationByte: Byte = when (orientationDegrees) {
+                90 -> 1
+                180 -> 2
+                270 -> 3
+                else -> 0  // 0 degrees (landscape)
+            }
+
+            // Total packet size = 1 (orientation) + data size
+            val totalSize = 1 + data.size
+            val sizeBytes = intToByteArray(totalSize)
             outputStream?.write(sizeBytes)
 
-            // Send data
+            // Send orientation byte
+            outputStream?.write(byteArrayOf(orientationByte))
+
+            // Send H.264 data
             outputStream?.write(data)
             outputStream?.flush()
             return@withContext true

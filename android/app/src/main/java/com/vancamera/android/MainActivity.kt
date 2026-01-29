@@ -171,11 +171,17 @@ class MainActivity : AppCompatActivity() {
                     initialize()
                     setEncodedFrameCallback { encodedData ->
                         // Capture current orientation at the moment of sending
-                        val orientation = currentOrientationDegrees
-                        // Mirror only the back camera (front camera/selfie is fine)
-                        val shouldMirror = !cameraManager.isFrontCamera()
+                        var orientation = currentOrientationDegrees
+
+                        // Back camera sensor orientation compensation:
+                        // Only apply 180° fix for portrait modes (90° and 270°)
+                        // Landscape modes (0° and 180°) work correctly without adjustment
+                        if (!cameraManager.isFrontCamera() && (orientation == 90 || orientation == 270)) {
+                            orientation = (orientation + 180) % 360
+                        }
+
                         lifecycleScope.launch {
-                            videoStreamer.sendVideoData(encodedData, orientation, shouldMirror)
+                            videoStreamer.sendVideoData(encodedData, orientation, mirror = false)
                         }
                     }
                 }

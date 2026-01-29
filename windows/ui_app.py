@@ -1,5 +1,5 @@
 """
-Interfaz gráfica con CustomTkinter
+GUI with CustomTkinter
 """
 import customtkinter as ctk
 import numpy as np
@@ -14,7 +14,7 @@ from adb_forward import ensure_port_forward, has_ready_usb_device, adb_is_availa
 
 
 class VanCameraApp:
-    """Aplicación principal de VanCamera Windows"""
+    """VanCamera Windows main application"""
 
     def __init__(self):
         ctk.set_appearance_mode("dark")
@@ -57,45 +57,45 @@ class VanCameraApp:
         self.setup_ui()
 
     def setup_ui(self):
-        """Configura la interfaz de usuario"""
-        # Frame principal
+        """Sets up the user interface"""
+        # Main frame
         main_frame = ctk.CTkFrame(self.root)
         main_frame.pack(fill="both", expand=True, padx=10, pady=10)
 
-        # Preview de video
+        # Video preview
         self.preview_label = ctk.CTkLabel(
             main_frame,
-            text="Sin conexión",
+            text="No connection",
             width=640,
             height=360
         )
         self.preview_label.pack(pady=10)
 
-        # Panel de controles
+        # Controls panel
         controls_frame = ctk.CTkFrame(main_frame)
         controls_frame.pack(fill="x", pady=10)
 
-        # Configuración de conexión
+        # Connection settings
         conn_frame = ctk.CTkFrame(controls_frame)
         conn_frame.pack(fill="x", padx=10, pady=5)
 
-        ctk.CTkLabel(conn_frame, text="IP del Android:").pack(side="left", padx=5)
+        ctk.CTkLabel(conn_frame, text="Android IP:").pack(side="left", padx=5)
         self.ip_entry = ctk.CTkEntry(conn_frame, width=150)
         self.ip_entry.insert(0, self.config.server_ip)
         self.ip_entry.pack(side="left", padx=5)
 
-        ctk.CTkLabel(conn_frame, text="Puerto:").pack(side="left", padx=5)
+        ctk.CTkLabel(conn_frame, text="Port:").pack(side="left", padx=5)
         self.port_entry = ctk.CTkEntry(conn_frame, width=80)
         self.port_entry.insert(0, str(self.config.server_port))
         self.port_entry.pack(side="left", padx=5)
 
-        # Botones
+        # Buttons
         button_frame = ctk.CTkFrame(controls_frame)
         button_frame.pack(fill="x", padx=10, pady=5)
 
         self.start_button = ctk.CTkButton(
             button_frame,
-            text="Iniciar Recepción",
+            text="Start Receiving",
             command=self.toggle_streaming,
             width=150
         )
@@ -103,30 +103,30 @@ class VanCameraApp:
 
         ctk.CTkButton(
             button_frame,
-            text="Configuración",
+            text="Settings",
             command=self.open_settings,
             width=150
         ).pack(side="left", padx=5)
 
-        # Estado
+        # Status
         self.status_label = ctk.CTkLabel(
             controls_frame,
-            text="Desconectado",
+            text="Disconnected",
             text_color="red"
         )
         self.status_label.pack(pady=5)
 
     def toggle_streaming(self):
-        """Inicia o detiene la recepción de video"""
+        """Starts or stops video reception"""
         if self.is_streaming:
             self.stop_streaming()
         else:
             self.start_streaming()
 
     def start_streaming(self):
-        """Inicia la recepción de video"""
+        """Starts video reception"""
         try:
-            # Obtener configuración de UI
+            # Get UI configuration
             ip = self.ip_entry.get()
             port = int(self.port_entry.get())
 
@@ -160,16 +160,16 @@ class VanCameraApp:
             else:
                 print(f"ADB: No ready USB device. Will try direct connection to {ip}:{port}")
 
-            # Actualizar configuración (IP puede haber cambiado si usamos USB)
+            # Update configuration (IP may have changed if using USB)
             self.config.server_ip = ip
             self.config.server_port = port
             self.config_manager.save(self.config)
 
-            # Inicializar receptor
+            # Initialize receiver
             self.video_receiver = VideoReceiver(ip, port, self.cert_handler)
             self.video_receiver.set_frame_callback(self.on_frame_received)
 
-            # Inicializar cámara virtual
+            # Initialize virtual camera
             self.virtual_cam = VirtualCamBridge(
                 width=self.config.video_width,
                 height=self.config.video_height,
@@ -177,24 +177,24 @@ class VanCameraApp:
             )
 
             if not self.virtual_cam.start():
-                self.status_label.configure(text="Error: OBS-VirtualCam no disponible", text_color="red")
+                self.status_label.configure(text="Error: OBS-VirtualCam not available", text_color="red")
                 return
 
-            # Conectar y empezar recepción
+            # Connect and start receiving
             if self.video_receiver.connect():
                 self.video_receiver.start_receiving()
                 self.is_streaming = True
-                self.start_button.configure(text="Detener Recepción")
-                self.status_label.configure(text="Conectado", text_color="green")
+                self.start_button.configure(text="Stop Receiving")
+                self.status_label.configure(text="Connected", text_color="green")
             else:
-                self.status_label.configure(text="Error de conexión", text_color="red")
+                self.status_label.configure(text="Connection error", text_color="red")
                 self.virtual_cam.stop()
 
         except Exception as e:
             self.status_label.configure(text=f"Error: {e}", text_color="red")
 
     def stop_streaming(self):
-        """Detiene la recepción de video"""
+        """Stops video reception"""
         # Set flag FIRST to stop callbacks from updating UI
         self.is_streaming = False
 
@@ -209,12 +209,12 @@ class VanCameraApp:
             self.virtual_cam.stop()
             self.virtual_cam = None
 
-        self.start_button.configure(text="Iniciar Recepción")
-        self.status_label.configure(text="Desconectado", text_color="red")
+        self.start_button.configure(text="Start Receiving")
+        self.status_label.configure(text="Disconnected", text_color="red")
 
         # Reset preview safely
         try:
-            self.preview_label.configure(image="", text="Sin conexión")
+            self.preview_label.configure(image="", text="No connection")
         except Exception:
             pass  # Ignore if widget has issues
 
@@ -235,11 +235,11 @@ class VanCameraApp:
         rotated_frame = self._rotate_frame(frame, orientation_degrees)
         self.current_frame = rotated_frame
 
-        # Enviar a cámara virtual
+        # Send to virtual camera
         if self.virtual_cam:
             self.virtual_cam.send_frame(rotated_frame)
 
-        # Actualizar preview en UI
+        # Update UI preview
         self.update_preview(rotated_frame)
 
     def _rotate_frame(self, frame: np.ndarray, orientation_degrees: int) -> np.ndarray:
@@ -306,22 +306,22 @@ class VanCameraApp:
 
         except Exception as e:
             self._ui_update_pending = False  # Reset on error
-            print(f"Error al actualizar preview: {e}")
+            print(f"Error updating preview: {e}")
 
     def open_settings(self):
-        """Abre ventana de configuración"""
+        """Opens settings window"""
         settings_window = ctk.CTkToplevel(self.root)
-        settings_window.title("Configuración")
+        settings_window.title("Settings")
         settings_window.geometry("400x300")
 
-        # Aquí se pueden agregar más opciones de configuración
-        ctk.CTkLabel(settings_window, text="Configuración de VanCamera").pack(pady=10)
+        # Additional configuration options can be added here
+        ctk.CTkLabel(settings_window, text="VanCamera Settings").pack(pady=10)
 
-        # Ruta del certificado
+        # Certificate path
         cert_frame = ctk.CTkFrame(settings_window)
         cert_frame.pack(fill="x", padx=10, pady=5)
 
-        ctk.CTkLabel(cert_frame, text="Ruta del certificado:").pack(side="left", padx=5)
+        ctk.CTkLabel(cert_frame, text="Certificate path:").pack(side="left", padx=5)
         cert_entry = ctk.CTkEntry(cert_frame, width=200)
         if self.config.certificate_path:
             cert_entry.insert(0, self.config.certificate_path)
@@ -335,11 +335,11 @@ class VanCameraApp:
                 self.cert_handler.load_certificate(cert_path)
             settings_window.destroy()
 
-        ctk.CTkButton(settings_window, text="Guardar", command=save_settings).pack(pady=10)
+        ctk.CTkButton(settings_window, text="Save", command=save_settings).pack(pady=10)
 
     def run(self):
-        """Ejecuta la aplicación"""
+        """Runs the application"""
         self.root.mainloop()
 
-        # Limpiar al cerrar
+        # Cleanup on close
         self.stop_streaming()

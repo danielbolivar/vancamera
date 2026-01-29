@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">VanCamera Android</string>
+    <string name="app_name">VanCamera</string>
     <string name="start_streaming">Iniciar Streaming</string>
     <string name="stop_streaming">Detener Streaming</string>
     <string name="connected">Conectado</string>

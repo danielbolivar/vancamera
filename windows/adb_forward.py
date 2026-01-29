@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from typing import List, Optional
 
@@ -20,14 +21,29 @@ class AdbDevice:
     status: str
 
 
+def _get_subprocess_flags() -> dict:
+    """
+    Returns subprocess flags to hide console window on Windows.
+    This prevents a command prompt from flashing when running ADB commands.
+    """
+    flags = {
+        "capture_output": True,
+        "text": True,
+        "check": False,
+    }
+
+    # On Windows, hide the console window
+    if sys.platform == "win32":
+        # CREATE_NO_WINDOW flag prevents console window from appearing
+        flags["creationflags"] = subprocess.CREATE_NO_WINDOW
+
+    return flags
+
+
 def _run_adb(args: List[str], timeout_s: int = 5) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        args,
-        capture_output=True,
-        text=True,
-        timeout=timeout_s,
-        check=False,
-    )
+    flags = _get_subprocess_flags()
+    flags["timeout"] = timeout_s
+    return subprocess.run(args, **flags)
 
 
 def adb_is_available() -> bool:

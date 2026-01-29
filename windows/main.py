@@ -2,11 +2,14 @@
 Punto de entrada principal de VanCamera Windows
 """
 import sys
-from ui_app import VanCameraApp
+import multiprocessing
 
 
 def main():
     """Función principal"""
+    # Import here to avoid issues with PyInstaller multiprocessing
+    from ui_app import VanCameraApp
+
     try:
         app = VanCameraApp()
         app.run()
@@ -19,4 +22,6 @@ def main():
 
 
 if __name__ == "__main__":
+    # Required for PyInstaller on Windows to prevent multiple windows
+    multiprocessing.freeze_support()
     main()

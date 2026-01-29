@@ -146,18 +146,21 @@ class VideoReceiver:
                 if not packet_data:
                     break
 
-                # Parse orientation byte (first byte)
-                # Protocol: [1 byte orientation][H.264 data]
-                # orientation: 0=0°, 1=90°, 2=180°, 3=270°
+                # Parse flags byte (first byte)
+                # Protocol: [1 byte flags][H.264 data]
+                # flags: bits 0-1 = orientation (0=0°, 1=90°, 2=180°, 3=270°)
+                #        bit 7 = mirror flag (for front camera)
                 if len(packet_data) < 2:
                     continue  # Invalid packet
 
-                orientation_byte = packet_data[0]
-                orientation_degrees = orientation_byte * 90  # Convert to degrees
+                flags_byte = packet_data[0]
+                orientation_code = flags_byte & 0x03  # Only use lower 2 bits for orientation
+                mirror = (flags_byte & 0x80) != 0     # Bit 7 = mirror flag
+                orientation_degrees = orientation_code * 90
                 h264_data = packet_data[1:]
 
                 # Decodificar frame
-                self._decode_frame(h264_data, orientation_degrees)
+                self._decode_frame(h264_data, orientation_degrees, mirror)
 
             except Exception as e:
                 print(f"Error en loop de recepción: {e}")
@@ -186,7 +189,7 @@ class VideoReceiver:
 
         return bytes(data)
 
-    def _decode_frame(self, h264_data: bytes, orientation_degrees: int = 0):
+    def _decode_frame(self, h264_data: bytes, orientation_degrees: int = 0, mirror: bool = False):
         """Decodifica un frame H.264 usando PyAV"""
         if not self.frame_callback:
             return
@@ -208,9 +211,9 @@ class VideoReceiver:
                 # Convert frame to numpy array in RGB format
                 frame_array = frame.to_ndarray(format='rgb24')
 
-                # Call callback with decoded frame and orientation
+                # Call callback with decoded frame, orientation, and mirror flag
                 if self.frame_callback:
-                    self.frame_callback(frame_array, orientation_degrees)
+                    self.frame_callback(frame_array, orientation_degrees, mirror)
 
         except (InvalidDataError, FFmpegError) as e:
             self.decode_error_count += 1

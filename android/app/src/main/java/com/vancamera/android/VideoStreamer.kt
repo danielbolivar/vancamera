@@ -95,36 +95,42 @@ class VideoStreamer(
     }
 
     /**
-     * Envía datos de video codificados con metadatos de orientación.
+     * Envía datos de video codificados con metadatos de orientación y mirror.
      * @param data H.264 encoded frame data
      * @param orientationDegrees Device orientation in degrees (0, 90, 180, 270)
+     * @param mirror Whether to flip horizontally (for back camera fix)
      * Returns true if sent successfully, false if connection was lost.
      *
-     * Protocol: [4 bytes: total size][1 byte: orientation][H.264 data]
-     * - orientation byte: 0=0°, 1=90°, 2=180°, 3=270°
+     * Protocol: [4 bytes: total size][1 byte: flags][H.264 data]
+     * - flags: bits 0-1 = orientation (0=0°, 1=90°, 2=180°, 3=270°), bit 7 = mirror
      */
-    suspend fun sendVideoData(data: ByteArray, orientationDegrees: Int = 0): Boolean = withContext(Dispatchers.IO) {
+    suspend fun sendVideoData(data: ByteArray, orientationDegrees: Int = 0, mirror: Boolean = false): Boolean = withContext(Dispatchers.IO) {
         if (!isConnected.value || outputStream == null) {
             Log.w(TAG, "No active connection, ignoring data")
             return@withContext false
         }
 
         try {
-            // Convert degrees to orientation byte (0, 1, 2, 3)
-            val orientationByte: Byte = when (orientationDegrees) {
+            // Convert degrees to orientation bits (0, 1, 2, 3)
+            var flagsByte: Int = when (orientationDegrees) {
                 90 -> 1
                 180 -> 2
                 270 -> 3
                 else -> 0  // 0 degrees (landscape)
             }
 
-            // Total packet size = 1 (orientation) + data size
+            // Add mirror flag in bit 7
+            if (mirror) {
+                flagsByte = flagsByte or 0x80
+            }
+
+            // Total packet size = 1 (flags) + data size
             val totalSize = 1 + data.size
             val sizeBytes = intToByteArray(totalSize)
             outputStream?.write(sizeBytes)
 
-            // Send orientation byte
-            outputStream?.write(byteArrayOf(orientationByte))
+            // Send flags byte
+            outputStream?.write(byteArrayOf(flagsByte.toByte()))
 
             // Send H.264 data
             outputStream?.write(data)

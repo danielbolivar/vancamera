@@ -215,14 +215,19 @@ class VanCameraApp:
         except Exception:
             pass  # Ignore if widget has issues
 
-    def on_frame_received(self, frame: np.ndarray, orientation_degrees: int = 0):
+    def on_frame_received(self, frame: np.ndarray, orientation_degrees: int = 0, mirror: bool = False):
         """
         Callback cuando se recibe un frame.
 
         Args:
             frame: Decoded video frame (RGB numpy array)
             orientation_degrees: Device orientation (0, 90, 180, 270)
+            mirror: True if frame should be horizontally flipped
         """
+        # Apply horizontal flip if mirror flag is set
+        if mirror:
+            frame = np.fliplr(frame).copy()
+
         # Rotate frame based on orientation from Android device
         rotated_frame = self._rotate_frame(frame, orientation_degrees)
         self.current_frame = rotated_frame

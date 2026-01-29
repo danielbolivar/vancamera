@@ -172,8 +172,10 @@ class MainActivity : AppCompatActivity() {
                     setEncodedFrameCallback { encodedData ->
                         // Capture current orientation at the moment of sending
                         val orientation = currentOrientationDegrees
+                        // Mirror only the back camera (front camera/selfie is fine)
+                        val shouldMirror = !cameraManager.isFrontCamera()
                         lifecycleScope.launch {
-                            videoStreamer.sendVideoData(encodedData, orientation)
+                            videoStreamer.sendVideoData(encodedData, orientation, shouldMirror)
                         }
                     }
                 }

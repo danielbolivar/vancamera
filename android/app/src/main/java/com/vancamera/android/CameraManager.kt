@@ -142,6 +142,13 @@ class CameraManager(
     }
 
     /**
+     * Returns true if the front camera is currently being used.
+     */
+    fun isFrontCamera(): Boolean {
+        return lensFacing == CameraSelector.LENS_FACING_FRONT
+    }
+
+    /**
      * Returns the preview use case (if exposed).
      */
     fun getPreviewUseCase(): Preview? {

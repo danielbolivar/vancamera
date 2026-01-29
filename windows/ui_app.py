@@ -51,6 +51,9 @@ class VanCameraApp:
         # Keep reference to prevent garbage collection of PhotoImage
         self._current_photo: Optional[ImageTk.PhotoImage] = None
 
+        # Frame dropping for low latency - track if UI update is pending
+        self._ui_update_pending = False
+
         self.setup_ui()
 
     def setup_ui(self):
@@ -266,20 +269,27 @@ class VanCameraApp:
             return frame
 
     def update_preview(self, frame: np.ndarray):
-        """Actualiza el preview en la UI"""
+        """Actualiza el preview en la UI con frame dropping para baja latencia"""
         # Don't update if not streaming (prevents errors after stopping)
         if not self.is_streaming:
             return
+
+        # Frame dropping: skip this frame if UI hasn't finished updating the previous one
+        if self._ui_update_pending:
+            return  # Drop frame - UI is behind
 
         try:
             # Convertir a PIL Image
             img = Image.fromarray(frame)
 
-            # Redimensionar para preview
-            img.thumbnail((640, 360), Image.Resampling.LANCZOS)
+            # Redimensionar para preview - use NEAREST for speed (fastest resampling)
+            img.thumbnail((640, 360), Image.Resampling.NEAREST)
 
             # Convertir a PhotoImage and store reference to prevent garbage collection
             self._current_photo = ImageTk.PhotoImage(image=img)
+
+            # Mark update as pending
+            self._ui_update_pending = True
 
             # Actualizar label (debe hacerse en el hilo principal)
             # Use a direct reference to the stored photo
@@ -289,10 +299,13 @@ class VanCameraApp:
                         self.preview_label.configure(image=self._current_photo, text="")
                     except Exception:
                         pass  # Ignore errors if widget was destroyed
+                # Mark update complete so next frame can be processed
+                self._ui_update_pending = False
 
             self.root.after(0, _update_label)
 
         except Exception as e:
+            self._ui_update_pending = False  # Reset on error
             print(f"Error al actualizar preview: {e}")
 
     def open_settings(self):

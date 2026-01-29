@@ -76,9 +76,9 @@ class VirtualCamBridge:
                 new_w = int(frame_w * scale)
                 new_h = int(frame_h * scale)
 
-                # Resize the frame
+                # Resize the frame - use NEAREST for speed (fastest resampling)
                 img = Image.fromarray(frame)
-                img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                img = img.resize((new_w, new_h), Image.Resampling.NEAREST)
 
                 # Create black canvas at target size and paste resized image centered
                 canvas = Image.new('RGB', (self.width, self.height), (0, 0, 0))
@@ -88,9 +88,8 @@ class VirtualCamBridge:
 
                 frame = np.array(canvas)
 
-            # Enviar frame
+            # Enviar frame - NO sleep_until_next_frame() to avoid 33ms blocking delay!
             self.camera.send(frame)
-            self.camera.sleep_until_next_frame()
 
         except Exception as e:
             print(f"Error al enviar frame: {e}")

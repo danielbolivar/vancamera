@@ -44,6 +44,25 @@ class H264Encoder(private val config: VideoConfig) {
             format.setInteger(MediaFormat.KEY_FRAME_RATE, config.fps)
             format.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, config.iFrameInterval)
 
+            // === LOW LATENCY SETTINGS ===
+            // Use Baseline profile - NO B-frames (B-frames cause seconds of decoder delay!)
+            format.setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline)
+            format.setInteger(MediaFormat.KEY_LEVEL, MediaCodecInfo.CodecProfileLevel.AVCLevel31)
+
+            // Explicitly disable B-frames
+            format.setInteger(MediaFormat.KEY_MAX_B_FRAMES, 0)
+
+            // CBR mode for consistent bitrate
+            format.setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
+
+            // Low latency flag (API 30+)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                format.setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
+            }
+
+            // Real-time priority
+            format.setInteger(MediaFormat.KEY_PRIORITY, 0) // 0 = realtime
+
             // Crear codificador
             mediaCodec = MediaCodec.createEncoderByType(MIME_TYPE)
             mediaCodec?.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)

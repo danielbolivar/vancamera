@@ -65,6 +65,13 @@ class VideoStreamer(
             val socket = ss.accept() as SSLSocket
             socket.enabledProtocols = arrayOf("TLSv1.3")
 
+            // === LOW LATENCY NETWORK SETTINGS ===
+            // TCP_NODELAY - send immediately, no Nagle buffering
+            socket.tcpNoDelay = true
+            // Smaller buffers - 64KB instead of default (reduces latency)
+            socket.sendBufferSize = 65536
+            socket.receiveBufferSize = 65536
+
             // Perform handshake.
             socket.startHandshake()
 

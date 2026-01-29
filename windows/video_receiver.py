@@ -45,15 +45,25 @@ class VideoReceiver:
             self._init_decoder()
 
     def _init_decoder(self):
-        """Inicializa el decodificador H.264"""
+        """Inicializa el decodificador H.264 con configuración de baja latencia"""
         try:
             codec = av.CodecContext.create('h264', 'r')
             # Dimensions are auto-detected from SPS/PPS in the stream
             # Enable error concealment for partial/corrupt frames
             codec.thread_type = 'AUTO'
+
+            # === LOW LATENCY DECODER SETTINGS ===
+            # Enable low_delay mode - don't wait for B-frames or reordering
+            # Use flags and flags2 as FFmpeg decoder options
+            codec.options = {
+                'flags': '+low_delay',
+                'flags2': '+fast',
+            }
+
             self.codec_context = codec
             self.decode_error_count = 0
             self.frames_decoded = 0
+            print(f"H.264 decoder initialized with low-latency settings")
         except Exception as e:
             print(f"Error initializing decoder: {e}")
 
@@ -68,6 +78,13 @@ class VideoReceiver:
             # Crear socket TCP
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.socket.settimeout(10)  # 10 segundos de timeout
+
+            # === LOW LATENCY NETWORK SETTINGS ===
+            # TCP_NODELAY - receive immediately, no Nagle buffering
+            self.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            # Smaller buffers - 64KB (reduces latency)
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 65536)
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536)
 
             # Crear contexto SSL
             ssl_context = self.cert_handler.create_ssl_context(
@@ -203,8 +220,13 @@ class VideoReceiver:
             packet = av.Packet(h264_data)
 
             # Decode the packet - may produce 0, 1, or more frames
-            for frame in self.codec_context.decode(packet):
-                self.frames_decoded += 1
+            # Only process the LATEST frame to reduce latency - drop older frames
+            decoded_frames = list(self.codec_context.decode(packet))
+
+            if decoded_frames:
+                # Only use the last (most recent) frame, skip older ones
+                frame = decoded_frames[-1]
+                self.frames_decoded += len(decoded_frames)
                 # Reset error count on successful decode
                 self.decode_error_count = 0
 

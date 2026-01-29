@@ -2,12 +2,14 @@ package com.vancamera.android
 
 import android.content.Context
 import android.util.Size
+import android.view.Surface
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
 import com.google.common.util.concurrent.ListenableFuture
@@ -28,25 +30,34 @@ class CameraManager(
     private var camera: Camera? = null
     private var cameraProvider: ProcessCameraProvider? = null
     private var imageAnalysis: ImageAnalysis? = null
+    private var preview: Preview? = null
     private val cameraExecutor: ExecutorService = Executors.newSingleThreadExecutor()
 
     private var frameCallback: ((ImageProxy) -> Unit)? = null
     private var videoConfig: VideoConfig? = null
+    private var lensFacing: Int = CameraSelector.LENS_FACING_BACK
+    private var boundPreviewView: PreviewView? = null
 
     /**
      * Initializes the camera with the provided configuration.
      */
-    suspend fun initialize(config: VideoConfig) {
+    suspend fun initialize(config: VideoConfig, previewView: PreviewView? = null) {
         videoConfig = config
+        boundPreviewView = previewView
 
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
         cameraProvider = cameraProviderFuture.await(ContextCompat.getMainExecutor(context))
 
-        val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+        val cameraSelector = CameraSelector.Builder()
+            .requireLensFacing(lensFacing)
+            .build()
+
+        val targetRotation = previewView?.display?.rotation ?: Surface.ROTATION_0
 
         // Configure image analysis to receive frames.
         imageAnalysis = ImageAnalysis.Builder()
             .setTargetResolution(config.resolution)
+            .setTargetRotation(targetRotation)
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
             .build()
             .also {
@@ -56,9 +67,15 @@ class CameraManager(
             }
 
         // Configure preview (optional; for displaying in UI).
-        val preview = Preview.Builder()
+        preview = Preview.Builder()
             .setTargetResolution(config.resolution)
+            .setTargetRotation(targetRotation)
             .build()
+            .also { p ->
+                previewView?.surfaceProvider?.let { provider ->
+                    p.setSurfaceProvider(provider)
+                }
+            }
 
         try {
             // Unbind all use cases before rebinding.
@@ -99,37 +116,22 @@ class CameraManager(
      * Switches between front and back cameras.
      */
     suspend fun switchCamera() {
-        val currentSelector = if (camera?.cameraInfo?.lensFacing == CameraSelector.LENS_FACING_BACK) {
-            CameraSelector.DEFAULT_FRONT_CAMERA
+        lensFacing = if (lensFacing == CameraSelector.LENS_FACING_BACK) {
+            CameraSelector.LENS_FACING_FRONT
         } else {
-            CameraSelector.DEFAULT_BACK_CAMERA
+            CameraSelector.LENS_FACING_BACK
         }
 
         val config = videoConfig ?: return
-        cameraProvider?.unbindAll()
-
-        val imageAnalysis = ImageAnalysis.Builder()
-            .setTargetResolution(config.resolution)
-            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-            .build()
-            .also {
-                it.setAnalyzer(cameraExecutor) { imageProxy ->
-                    frameCallback?.invoke(imageProxy)
-                }
-            }
-
-        camera = cameraProvider?.bindToLifecycle(
-            lifecycleOwner,
-            currentSelector,
-            imageAnalysis
-        )
+        val pv = boundPreviewView
+        initialize(config, pv)
     }
 
     /**
      * Returns the preview use case (if exposed).
      */
     fun getPreviewUseCase(): Preview? {
-        return null // Se maneja internamente
+        return preview
     }
 
     /**

@@ -10,6 +10,7 @@ from video_receiver import VideoReceiver
 from virtual_cam_bridge import VirtualCamBridge
 from certificate_handler import CertificateHandler
 from config_manager import ConfigManager, AppConfig
+from adb_forward import ensure_port_forward, has_ready_usb_device
 
 
 class VanCameraApp:
@@ -25,6 +26,17 @@ class VanCameraApp:
 
         self.config_manager = ConfigManager()
         self.config = self.config_manager.load()
+
+        # Auto USB setup: if a device is connected over USB, setup adb port forwarding
+        # so the user does not need to run setup_adb_forward.ps1 manually.
+        #
+        # Note: adb must be installed and on PATH for this to work.
+        if has_ready_usb_device():
+            if ensure_port_forward(local_port=self.config.server_port, remote_port=self.config.server_port):
+                # For USB forwarding, the destination is local.
+                self.config.server_ip = "127.0.0.1"
+                self.config.connection_mode = "usb"
+                self.config_manager.save(self.config)
 
         self.cert_handler = CertificateHandler()
         if self.config.certificate_path:
@@ -113,7 +125,22 @@ class VanCameraApp:
             ip = self.ip_entry.get()
             port = int(self.port_entry.get())
 
-            # Actualizar configuración
+            # If a USB device is available, ensure adb port forwarding is active on this port.
+            # This makes `adb forward tcp:port tcp:port` effectively persistent for each session.
+            if has_ready_usb_device():
+                if ensure_port_forward(local_port=port, remote_port=port):
+                    # For USB forwarding, the destination is always the local loopback.
+                    ip = "127.0.0.1"
+                    # Persist this choice so next launch reuses it.
+                    self.config.connection_mode = "usb"
+                else:
+                    self.status_label.configure(
+                        text="Error: could not setup ADB port forward (check adb/USB)",
+                        text_color="red",
+                    )
+                    return
+
+            # Actualizar configuración (IP puede haber cambiado si usamos USB)
             self.config.server_ip = ip
             self.config.server_port = port
             self.config_manager.save(self.config)

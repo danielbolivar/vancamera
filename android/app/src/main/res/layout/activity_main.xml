@@ -34,7 +34,7 @@
             android:id="@+id/btnStream"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Iniciar Streaming"
+            android:text="Start streaming"
             android:textSize="18sp"
             android:layout_marginBottom="8dp" />
 
@@ -43,18 +43,27 @@
             android:id="@+id/tvStatus"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Desconectado"
+            android:text="Disconnected"
             android:textColor="#FFFFFF"
             android:textSize="14sp"
             android:gravity="center"
             android:layout_marginBottom="8dp" />
+
+        <!-- Flip camera -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnFlipCamera"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Flip camera"
+            android:layout_marginBottom="8dp"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton" />
 
         <!-- Botón Configuración -->
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnSettings"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Configuración"
+            android:text="Settings"
             style="@style/Widget.MaterialComponents.Button.OutlinedButton" />
 
     </LinearLayout>

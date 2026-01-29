@@ -7,7 +7,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import java.io.OutputStream
-import javax.net.ssl.SSLContext
+import java.net.InetSocketAddress
+import java.net.ServerSocket
 import javax.net.ssl.SSLServerSocket
 import javax.net.ssl.SSLSocket
 
@@ -42,17 +43,21 @@ class VideoStreamer(
      */
     suspend fun connect() = withContext(Dispatchers.IO) {
         try {
+            // Ensure any previous socket is closed first
+            closeAllSockets()
+
             Log.d(TAG, "Waiting for client on 0.0.0.0:${connectionConfig.serverPort}")
 
             // Create SSLContext with our certificate/private key.
             val sslContext = certificateManager.createSSLContext()
 
-            // Create SSL server socket.
-            val ss = (sslContext.serverSocketFactory.createServerSocket(connectionConfig.serverPort) as SSLServerSocket).apply {
-                enabledProtocols = arrayOf("TLSv1.3")
-                needClientAuth = false
-                reuseAddress = true
-            }
+            // Create UNBOUND SSL server socket first, then set options, then bind.
+            // This ensures SO_REUSEADDR takes effect before binding.
+            val ss = sslContext.serverSocketFactory.createServerSocket() as SSLServerSocket
+            ss.reuseAddress = true
+            ss.enabledProtocols = arrayOf("TLSv1.3")
+            ss.needClientAuth = false
+            ss.bind(InetSocketAddress(connectionConfig.serverPort))
 
             serverSocket = ss
 
@@ -70,34 +75,52 @@ class VideoStreamer(
             Log.d(TAG, "Client connected successfully")
 
         } catch (e: Exception) {
-            Log.e(TAG, "Error al conectar: ${e.message}", e)
+            Log.e(TAG, "Connection error: ${e.message}", e)
+            closeAllSockets()
             isConnected.value = false
             throw StreamException("Failed to accept client: ${e.message}", e)
         }
     }
 
     /**
-     * Envía datos de video codificados
+     * Closes all sockets safely, ignoring any exceptions.
      */
-    suspend fun sendVideoData(data: ByteArray) = withContext(Dispatchers.IO) {
+    private fun closeAllSockets() {
+        try { outputStream?.close() } catch (_: Exception) { }
+        try { sslSocket?.close() } catch (_: Exception) { }
+        try { serverSocket?.close() } catch (_: Exception) { }
+        outputStream = null
+        sslSocket = null
+        serverSocket = null
+    }
+
+    /**
+     * Envía datos de video codificados.
+     * Returns true if sent successfully, false if connection was lost.
+     */
+    suspend fun sendVideoData(data: ByteArray): Boolean = withContext(Dispatchers.IO) {
         if (!isConnected.value || outputStream == null) {
-            Log.w(TAG, "No hay conexión activa, ignorando datos")
-            return@withContext
+            Log.w(TAG, "No active connection, ignoring data")
+            return@withContext false
         }
 
         try {
-            // Enviar tamaño del paquete (4 bytes)
+            // Send packet size (4 bytes, big-endian)
             val sizeBytes = intToByteArray(data.size)
             outputStream?.write(sizeBytes)
 
-            // Enviar datos
+            // Send data
             outputStream?.write(data)
             outputStream?.flush()
+            return@withContext true
 
         } catch (e: Exception) {
-            Log.e(TAG, "Error al enviar datos: ${e.message}", e)
+            Log.e(TAG, "Error sending data (connection lost): ${e.message}")
+            // Gracefully mark as disconnected - do NOT throw.
+            // This prevents app crash on "Broken pipe".
+            closeAllSockets()
             isConnected.value = false
-            throw StreamException("Error al enviar datos: ${e.message}", e)
+            return@withContext false
         }
     }
 
@@ -117,18 +140,10 @@ class VideoStreamer(
      * Disconnects the current client and stops the server socket.
      */
     suspend fun disconnect() = withContext(Dispatchers.IO) {
-        try {
-            outputStream?.close()
-            sslSocket?.close()
-            serverSocket?.close()
-            outputStream = null
-            sslSocket = null
-            serverSocket = null
-            isConnected.value = false
-            Log.d(TAG, "Desconectado")
-        } catch (e: Exception) {
-            Log.e(TAG, "Error al desconectar: ${e.message}", e)
-        }
+        Log.d(TAG, "Disconnecting...")
+        closeAllSockets()
+        isConnected.value = false
+        Log.d(TAG, "Disconnected")
     }
 
     /**

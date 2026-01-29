@@ -1,8 +1,8 @@
 package com.vancamera.android
 
 import android.Manifest
-import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -10,6 +10,9 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.camera.view.PreviewView
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 
 /**
@@ -25,6 +28,11 @@ class MainActivity : AppCompatActivity() {
     private var videoConfig: VideoConfig = VideoConfig.fromPreset(VideoPreset.PRESET_720P_30FPS)
     private var connectionConfig: ConnectionConfig = ConnectionConfig.default()
     private var isStreaming = false
+    private var previewView: PreviewView? = null
+    private var connectionObserverJob: Job? = null
+
+    private lateinit var statusText: android.widget.TextView
+    private lateinit var streamButton: com.google.android.material.button.MaterialButton
 
     private val requestPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -41,6 +49,9 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         certificateManager = CertificateManager(this)
+        previewView = findViewById(R.id.previewView)
+        statusText = findViewById(R.id.tvStatus)
+        streamButton = findViewById(R.id.btnStream)
 
         // Check permissions.
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
@@ -55,12 +66,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupUI() {
-        findViewById<com.google.android.material.button.MaterialButton>(R.id.btnStream)
+        streamButton.setOnClickListener {
+            if (isStreaming) stopStreaming() else startStreaming()
+        }
+
+        findViewById<com.google.android.material.button.MaterialButton>(R.id.btnFlipCamera)
             .setOnClickListener {
-                if (isStreaming) {
-                    stopStreaming()
-                } else {
-                    startStreaming()
+                lifecycleScope.launch {
+                    try {
+                        if (::cameraManager.isInitialized) {
+                            cameraManager.switchCamera()
+                        }
+                    } catch (e: Exception) {
+                        Toast.makeText(this@MainActivity, "Failed to switch camera: ${e.message}", Toast.LENGTH_SHORT).show()
+                    }
                 }
             }
 
@@ -75,7 +94,7 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             try {
                 cameraManager = CameraManager(this@MainActivity, this@MainActivity)
-                cameraManager.initialize(videoConfig)
+                cameraManager.initialize(videoConfig, previewView)
 
                 // Set callback to receive frames.
                 cameraManager.setFrameCallback { imageProxy ->
@@ -99,6 +118,26 @@ class MainActivity : AppCompatActivity() {
     private fun startStreaming() {
         lifecycleScope.launch {
             try {
+                // Update UI immediately: we are starting / listening.
+                isStreaming = true
+                streamButton.text = "Stop streaming"
+                statusText.text = "Listening..."
+
+                // Adjust encoder config based on current orientation.
+                val currentOrientation = resources.configuration.orientation
+                val basePreset = VideoConfig.fromPreset(VideoPreset.PRESET_720P_30FPS)
+                videoConfig = if (currentOrientation == Configuration.ORIENTATION_PORTRAIT) {
+                    VideoConfig(
+                        width = basePreset.height,
+                        height = basePreset.width,
+                        fps = basePreset.fps,
+                        bitrate = basePreset.bitrate,
+                        iFrameInterval = basePreset.iFrameInterval
+                    )
+                } else {
+                    basePreset
+                }
+
                 // Initialize encoder.
                 h264Encoder = H264Encoder(videoConfig).apply {
                     initialize()
@@ -117,12 +156,39 @@ class MainActivity : AppCompatActivity() {
                     certificateManager
                 )
 
-                // Connect.
+                // Connect (blocks until client connects).
                 videoStreamer.connect()
 
-                isStreaming = true
+                // NOW that we are connected, set up the observer to detect disconnection.
+                // Use drop(1) to skip the current value and only react to CHANGES.
+                connectionObserverJob?.cancel()
+                connectionObserverJob = lifecycleScope.launch {
+                    videoStreamer.getConnectionState()
+                        .drop(1)  // Skip initial value, only react to changes
+                        .collectLatest { connected ->
+                            if (!connected && isStreaming) {
+                                // Connection was lost while streaming.
+                                runOnUiThread {
+                                    isStreaming = false
+                                    streamButton.text = "Start streaming"
+                                    statusText.text = "Disconnected"
+                                    Toast.makeText(
+                                        this@MainActivity,
+                                        "Connection lost",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            }
+                        }
+                }
+
+                statusText.text = "Connected"
                 Toast.makeText(this@MainActivity, "Streaming started", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
+                isStreaming = false
+                connectionObserverJob?.cancel()
+                streamButton.text = "Start streaming"
+                statusText.text = "Disconnected"
                 Toast.makeText(this@MainActivity,
                     "Failed to start streaming: ${e.message}",
                     Toast.LENGTH_LONG).show()
@@ -133,9 +199,17 @@ class MainActivity : AppCompatActivity() {
     private fun stopStreaming() {
         lifecycleScope.launch {
             try {
-                h264Encoder.release()
-                videoStreamer.disconnect()
+                connectionObserverJob?.cancel()
+                connectionObserverJob = null
+                if (::h264Encoder.isInitialized) {
+                    h264Encoder.release()
+                }
+                if (::videoStreamer.isInitialized) {
+                    videoStreamer.disconnect()
+                }
                 isStreaming = false
+                streamButton.text = "Start streaming"
+                statusText.text = "Disconnected"
                 Toast.makeText(this@MainActivity, "Streaming stopped", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
                 Toast.makeText(this@MainActivity,

@@ -26,6 +26,10 @@ class H264Encoder(private val config: VideoConfig) {
     private val isRunning = AtomicBoolean(false)
     private var frameCallback: ((ByteArray) -> Unit)? = null
 
+    // Store SPS/PPS codec config to prepend to keyframes
+    private var codecConfigData: ByteArray? = null
+    private var configSentWithFirstFrame = false
+
     /**
      * Inicializa el codificador MediaCodec
      */
@@ -171,7 +175,7 @@ class H264Encoder(private val config: VideoConfig) {
                 }
             }
 
-            // Obtener datos codificados
+            // Get encoded data
             val bufferInfo = MediaCodec.BufferInfo()
             var outputBufferIndex = mediaCodec?.dequeueOutputBuffer(bufferInfo, TIMEOUT_USEC) ?: -1
 
@@ -181,7 +185,27 @@ class H264Encoder(private val config: VideoConfig) {
                     val data = ByteArray(bufferInfo.size)
                     buffer.get(data)
 
-                    frameCallback?.invoke(data)
+                    // Check if this is codec config data (SPS/PPS)
+                    if ((bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
+                        // Store SPS/PPS for later use
+                        codecConfigData = data.copyOf()
+                        Log.d(TAG, "Received codec config (SPS/PPS): ${data.size} bytes")
+                        // Don't send config data alone - it will be prepended to keyframes
+                    } else {
+                        // Regular frame data
+                        val isKeyFrame = (bufferInfo.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME) != 0
+
+                        // Prepend SPS/PPS to keyframes (or first frame) so decoder can initialize
+                        val outputData = if ((isKeyFrame || !configSentWithFirstFrame) && codecConfigData != null) {
+                            configSentWithFirstFrame = true
+                            Log.d(TAG, "Prepending SPS/PPS to ${if (isKeyFrame) "keyframe" else "first frame"}")
+                            codecConfigData!! + data
+                        } else {
+                            data
+                        }
+
+                        frameCallback?.invoke(outputData)
+                    }
 
                     mediaCodec?.releaseOutputBuffer(outputBufferIndex, false)
                 }
@@ -209,9 +233,11 @@ class H264Encoder(private val config: VideoConfig) {
             mediaCodec?.stop()
             mediaCodec?.release()
             mediaCodec = null
-            Log.d(TAG, "H264Encoder liberado")
+            codecConfigData = null
+            configSentWithFirstFrame = false
+            Log.d(TAG, "H264Encoder released")
         } catch (e: Exception) {
-            Log.e(TAG, "Error al liberar H264Encoder: ${e.message}", e)
+            Log.e(TAG, "Error releasing H264Encoder: ${e.message}", e)
         }
     }
 

@@ -12,9 +12,17 @@ from certificate_handler import CertificateHandler
 try:
     import av
     HAS_AV = True
+    # PyAV 16+ exposes specific error types like InvalidDataError and FFmpegError,
+    # but does NOT have av.AVError. Import the concrete error classes instead.
+    try:
+        from av import InvalidDataError, FFmpegError  # type: ignore
+    except Exception:
+        # Fallback: treat all exceptions as generic for decoding.
+        InvalidDataError = FFmpegError = Exception  # type: ignore
 except ImportError:
     HAS_AV = False
     print("Advertencia: PyAV no está instalado. La decodificación H.264 puede no funcionar correctamente.")
+    InvalidDataError = FFmpegError = Exception  # type: ignore
 
 
 class VideoReceiver:
@@ -39,10 +47,14 @@ class VideoReceiver:
         """Inicializa el decodificador H.264"""
         try:
             codec = av.CodecContext.create('h264', 'r')
-            # Las dimensiones se ajustarán automáticamente con el primer frame
+            # Dimensions are auto-detected from SPS/PPS in the stream
+            # Enable error concealment for partial/corrupt frames
+            codec.thread_type = 'AUTO'
             self.codec_context = codec
+            self.decode_error_count = 0
+            self.frames_decoded = 0
         except Exception as e:
-            print(f"Error al inicializar decodificador: {e}")
+            print(f"Error initializing decoder: {e}")
 
     def connect(self) -> bool:
         """
@@ -166,24 +178,38 @@ class VideoReceiver:
             return
 
         if not HAS_AV or not self.codec_context:
-            print("Decodificador H.264 no disponible")
+            print("H.264 decoder not available")
             return
 
         try:
-            # Crear un paquete AVPacket desde los datos H.264
+            # Create an AVPacket from the H.264 data
             packet = av.Packet(h264_data)
 
-            # Decodificar el paquete
+            # Decode the packet - may produce 0, 1, or more frames
             for frame in self.codec_context.decode(packet):
-                # Convertir frame a numpy array en formato RGB
+                self.frames_decoded += 1
+                # Reset error count on successful decode
+                self.decode_error_count = 0
+
+                # Convert frame to numpy array in RGB format
                 frame_array = frame.to_ndarray(format='rgb24')
 
-                # Llamar callback con el frame decodificado
+                # Call callback with decoded frame
                 if self.frame_callback:
                     self.frame_callback(frame_array)
 
+        except (InvalidDataError, FFmpegError) as e:
+            self.decode_error_count += 1
+            # Only log first few errors and then periodically to avoid spam
+            if self.decode_error_count <= 3 or self.decode_error_count % 100 == 0:
+                print(f"Decode error ({self.decode_error_count}x): {e}")
+
+            # If too many consecutive errors, try reinitializing the decoder
+            if self.decode_error_count >= 50:
+                print("Too many decode errors, reinitializing decoder...")
+                self._init_decoder()
         except Exception as e:
-            print(f"Error al decodificar frame: {e}")
+            print(f"Unexpected decode error: {e}")
 
     def set_frame_callback(self, callback: Callable[[np.ndarray], None]):
         """Establece el callback para recibir frames decodificados"""

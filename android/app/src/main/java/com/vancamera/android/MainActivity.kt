@@ -170,18 +170,13 @@ class MainActivity : AppCompatActivity() {
                 h264Encoder = H264Encoder(videoConfig).apply {
                     initialize()
                     setEncodedFrameCallback { encodedData ->
-                        // Capture current orientation at the moment of sending
-                        var orientation = currentOrientationDegrees
+                        val orientation = currentOrientationDegrees
+                        val isBackCamera = !cameraManager.isFrontCamera()
 
-                        // Back camera sensor orientation compensation:
-                        // Only apply 180° fix for portrait modes (90° and 270°)
-                        // Landscape modes (0° and 180°) work correctly without adjustment
-                        if (!cameraManager.isFrontCamera() && (orientation == 90 || orientation == 270)) {
-                            orientation = (orientation + 180) % 360
-                        }
-
+                        // Send isBackCamera as the "mirror" flag to tell Windows
+                        // which camera is being used for different rotation handling
                         lifecycleScope.launch {
-                            videoStreamer.sendVideoData(encodedData, orientation, mirror = false)
+                            videoStreamer.sendVideoData(encodedData, orientation, mirror = isBackCamera)
                         }
                     }
                 }

@@ -218,52 +218,80 @@ class VanCameraApp:
         except Exception:
             pass  # Ignore if widget has issues
 
-    def on_frame_received(self, frame: np.ndarray, orientation_degrees: int = 0, mirror: bool = False):
+    def on_frame_received(self, frame: np.ndarray, orientation_degrees: int = 0, is_back_camera: bool = False):
         """
-        Callback cuando se recibe un frame.
+        Callback when a frame is received.
 
         Args:
             frame: Decoded video frame (RGB numpy array)
             orientation_degrees: Device orientation (0, 90, 180, 270)
-            mirror: True if frame should be horizontally flipped
+            is_back_camera: True if this is from the back camera (different rotation needed)
         """
-        # Apply horizontal flip if mirror flag is set
-        if mirror:
-            frame = np.fliplr(frame).copy()
+        # Process frame for preview
+        preview_frame = self._process_frame_for_preview(frame, orientation_degrees, is_back_camera)
+        self.current_frame = preview_frame
 
-        # Rotate frame based on orientation from Android device
-        rotated_frame = self._rotate_frame(frame, orientation_degrees)
-        self.current_frame = rotated_frame
-
-        # Send to virtual camera
+        # Process frame for virtual camera (OBS) - may need different transformations
         if self.virtual_cam:
-            self.virtual_cam.send_frame(rotated_frame)
+            vcam_frame = self._process_frame_for_vcam(frame, orientation_degrees, is_back_camera)
+            self.virtual_cam.send_frame(vcam_frame)
 
         # Update UI preview
-        self.update_preview(rotated_frame)
+        self.update_preview(preview_frame)
 
-    def _rotate_frame(self, frame: np.ndarray, orientation_degrees: int) -> np.ndarray:
-        """
-        Rotate frame based on device orientation.
+    def _process_frame_for_preview(self, frame: np.ndarray, orientation_degrees: int, is_back_camera: bool) -> np.ndarray:
+        """Process frame for UI preview display."""
+        if is_back_camera:
+            # Back camera transformations for PREVIEW (don't touch - working)
+            if orientation_degrees == 0:
+                return frame
+            elif orientation_degrees == 90:
+                return np.rot90(frame, k=3)
+            elif orientation_degrees == 180:
+                return np.rot90(frame, k=2)
+            elif orientation_degrees == 270:
+                return np.rot90(frame, k=1)
+            else:
+                return frame
+        else:
+            # Front camera for PREVIEW - rotate then flip horizontal
+            rotated = self._rotate_front_camera(frame, orientation_degrees)
+            return np.fliplr(rotated)
 
-        Args:
-            frame: Input frame
-            orientation_degrees: 0 (landscape), 90 (portrait right), 180 (landscape upside-down), 270 (portrait left)
+    def _process_frame_for_vcam(self, frame: np.ndarray, orientation_degrees: int, is_back_camera: bool) -> np.ndarray:
+        """Process frame for virtual camera (OBS)."""
+        if is_back_camera:
+            # Back camera transformations for OBS/Virtual Camera
+            # Both landscape orientations (0° and 180°) need same treatment
+            if orientation_degrees == 0:
+                # Landscape right - just flip horizontal
+                return np.fliplr(frame)
+            elif orientation_degrees == 90:
+                # Portrait - rotate 270° + flip horizontal (OK)
+                rotated = np.rot90(frame, k=3)
+                return np.fliplr(rotated)
+            elif orientation_degrees == 180:
+                # Landscape left - just flip horizontal
+                return np.fliplr(frame)
+            elif orientation_degrees == 270:
+                # Portrait upside-down - rotate 90° + flip horizontal
+                rotated = np.rot90(frame, k=1)
+                return np.fliplr(rotated)
+            else:
+                return frame
+        else:
+            # Front camera - standard rotation
+            return self._rotate_front_camera(frame, orientation_degrees)
 
-        Returns:
-            Rotated frame
-        """
+    def _rotate_front_camera(self, frame: np.ndarray, orientation_degrees: int) -> np.ndarray:
+        """Standard rotation for front camera."""
         if orientation_degrees == 0:
-            # Landscape - no rotation needed
             return frame
         elif orientation_degrees == 90:
-            # Portrait (phone rotated right) - rotate frame 90° counter-clockwise
             return np.rot90(frame, k=1)
         elif orientation_degrees == 180:
-            # Upside-down landscape - rotate 180°
             return np.rot90(frame, k=2)
         elif orientation_degrees == 270:
-            # Portrait (phone rotated left) - rotate frame 90° clockwise
             return np.rot90(frame, k=3)
         else:
             return frame

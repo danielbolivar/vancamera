@@ -2,6 +2,8 @@
 
 Use your Android phone as a high-quality, low-latency webcam for Windows. Secure, open-source, works natively with Discord, Zoom, and Teams.
 
+> You can download and install VanCamera for Windows and Android [here](https://github.com/danielbolivar/vancamera/releases/tag/1.0.0)
+
 ## Features
 
 - **Auto-Discovery** - Devices appear automatically (USB and WiFi)

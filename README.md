@@ -4,6 +4,10 @@ Use your Android phone as a high-quality, low-latency webcam for Windows. Secure
 
 > You can download and install VanCamera for Windows and Android [here](https://github.com/danielbolivar/vancamera/releases/tag/1.0.0)
 
+> [!IMPORTANT]
+> There are a bunch of known issues, please free to help us fix them
+> You can give them a look [here](https://github.com/danielbolivar/vancamera/issues)
+
 ## Features
 
 - **Auto-Discovery** - Devices appear automatically (USB and WiFi)

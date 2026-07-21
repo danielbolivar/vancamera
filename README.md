@@ -21,7 +21,7 @@ Use your Android phone as a high-quality, low-latency webcam for Windows. Secure
 ### 1. Install Prerequisites
 
 **Windows:**
-- Install [OBS-VirtualCam Legacy v2.0.5](https://github.com/Fenrirthviti/obs-virtual-cam/releases/tag/v2.0.5)
+- Install [OBS-VirtualCam Legacy v2.0.5](https://github.com/Fenrirthviti/obs-virtual-cam/releases/tag/2.0.5)
 - Install [Python 3.8+](https://www.python.org/downloads/)
 - Install [ADB](https://developer.android.com/studio/releases/platform-tools) (for USB mode)
 

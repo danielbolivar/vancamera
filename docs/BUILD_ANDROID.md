@@ -182,10 +182,11 @@ android/
 │   ├── keystore/           # Signing keystore (gitignored)
 │   │   └── vancamera.jks
 │   └── src/
-│       └── main/
-│           ├── AndroidManifest.xml
-│           ├── java/       # Kotlin/Java source
-│           └── res/        # Resources
+│       ├── main/
+│       │   ├── AndroidManifest.xml
+│       │   ├── java/       # Kotlin/Java source
+│       │   └── res/        # Resources (values-es = Spanish)
+│       └── test/           # JVM unit tests (./gradlew testDebugUnitTest)
 ├── build.gradle.kts        # Project-level build config
 ├── settings.gradle.kts     # Project settings
 ├── gradle.properties       # Gradle settings

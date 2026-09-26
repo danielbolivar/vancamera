@@ -1,9 +1,43 @@
 <resources>
-    <string name="app_name">VanCamera</string>
-    <string name="start_streaming">Iniciar Streaming</string>
-    <string name="stop_streaming">Detener Streaming</string>
-    <string name="connected">Conectado</string>
-    <string name="disconnected">Desconectado</string>
-    <string name="settings">Configuración</string>
-    <string name="camera_permission_required">Se requiere permiso de cámara para usar esta aplicación</string>
+    <string name="app_name" translatable="false">VanCamera</string>
+
+    <string name="start_streaming">Start streaming</string>
+    <string name="stop_streaming">Stop streaming</string>
+    <string name="switch_camera">Switch camera</string>
+    <string name="toggle_preview">Show or hide preview</string>
+    <string name="grant_permission">Allow camera</string>
+
+    <string name="status_ready">Ready</string>
+    <string name="status_starting">Starting…</string>
+    <string name="status_waiting">Waiting for the PC</string>
+    <string name="status_streaming">Streaming to %1$s</string>
+    <string name="status_error">Something went wrong</string>
+    <string name="status_permission">Camera permission required</string>
+
+    <string name="detail_ready">Tap Start, then press Connect in the VanCamera PC app.</string>
+    <string name="detail_waiting_usb">USB: plug in the cable and press Connect on the PC.</string>
+    <string name="detail_no_network">Wi-Fi: not connected. You can still use USB.</string>
+    <string name="detail_address">%1$s: %2$s</string>
+    <string name="detail_stats">%1$d fps · %2$s Mbps</string>
+    <string name="detail_background">You can lock the phone or close the app, streaming keeps going.</string>
+    <string name="detail_permission">VanCamera needs the camera to work as a webcam.</string>
+
+    <string name="address_wifi">Wi-Fi</string>
+    <string name="address_hotspot">Hotspot</string>
+    <string name="address_ethernet">Ethernet</string>
+    <string name="address_usb_tether">USB tethering</string>
+    <string name="address_other">Network</string>
+
+    <string name="preview_off">Preview off to save battery</string>
+    <string name="preview_off_hint">Tap the eye to turn it back on</string>
+
+    <string name="notification_channel">Streaming</string>
+    <string name="notification_channel_description">Shown while VanCamera is streaming the camera</string>
+    <string name="notification_waiting">Waiting for the PC to connect</string>
+    <string name="notification_streaming">Streaming to %1$s</string>
+    <string name="action_stop">Stop</string>
+    <string name="action_switch_camera">Switch camera</string>
+
+    <string name="error_camera_permission">Camera permission is required</string>
+    <string name="toast_streaming_stopped">Streaming stopped</string>
 </resources>

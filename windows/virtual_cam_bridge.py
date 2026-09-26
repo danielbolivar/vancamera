@@ -1,17 +1,22 @@
 """
 Bridge to inject video frames into OBS-VirtualCam
 """
-import numpy as np
-from typing import Optional
-import pyvirtualcam
-from pyvirtualcam import PixelFormat
+from __future__ import annotations
 
-# Try to use OpenCV for faster resize (falls back to numpy if not available)
+from typing import Optional
+
+import numpy as np
+
+import frame_transform
+
 try:
-    import cv2
-    HAS_CV2 = True
-except ImportError:
-    HAS_CV2 = False
+    import pyvirtualcam
+    from pyvirtualcam import PixelFormat
+    HAS_PYVIRTUALCAM = True
+except ImportError:  # pragma: no cover - depends on the platform
+    pyvirtualcam = None
+    PixelFormat = None
+    HAS_PYVIRTUALCAM = False
 
 
 class VirtualCamBridge:
@@ -21,8 +26,10 @@ class VirtualCamBridge:
         self.width = width
         self.height = height
         self.fps = fps
-        self.camera: Optional[pyvirtualcam.Camera] = None
+        self.camera = None
         self.is_running = False
+        self.last_error: Optional[str] = None
+        self.device_name: Optional[str] = None
 
         # Pre-allocated canvas for letterboxing (reused each frame)
         self._canvas: Optional[np.ndarray] = None
@@ -34,8 +41,13 @@ class VirtualCamBridge:
         Starts the virtual camera
 
         Returns:
-            True if started successfully
+            True if started successfully (``last_error`` explains failures)
         """
+        if self.is_running:
+            return True
+        if not HAS_PYVIRTUALCAM:
+            self.last_error = "pyvirtualcam is not installed"
+            return False
         try:
             self.camera = pyvirtualcam.Camera(
                 width=self.width,
@@ -44,22 +56,25 @@ class VirtualCamBridge:
                 # Use RGB format - our decoder produces RGB frames
                 fmt=PixelFormat.RGB
             )
+            self.device_name = getattr(self.camera, "device", None)
             self.is_running = True
 
-            # Pre-allocate canvas (black frame)
+            # Pre-allocate canvas (black frame) and show it until video arrives.
             self._canvas = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+            self._last_frame_size = (0, 0)
+            self.camera.send(self._canvas)
 
-            print(f"Virtual camera started: {self.width}x{self.height} @ {self.fps}fps")
+            print(f"Virtual camera started: {self.width}x{self.height} @ {self.fps}fps ({self.device_name})")
             return True
         except Exception as e:
+            self.last_error = str(e)
             print(f"Error starting virtual camera: {e}")
             print("Make sure OBS-VirtualCam is installed")
             return False
 
     def send_frame(self, frame: np.ndarray):
         """
-        Sends a frame to the virtual camera.
-        Optimized for low latency - minimal processing.
+        Sends a frame to the virtual camera, letterboxed to the camera size.
 
         Args:
             frame: Frame as numpy array (RGB)
@@ -68,62 +83,42 @@ class VirtualCamBridge:
             return
 
         try:
-            # Fast path: if frame matches target size exactly, send directly
             frame_h, frame_w = frame.shape[:2]
 
+            # Fast path: if frame matches target size exactly, send directly
             if frame_h == self.height and frame_w == self.width:
-                # Ensure contiguous memory for fastest send
-                if not frame.flags['C_CONTIGUOUS']:
-                    frame = np.ascontiguousarray(frame)
-                self.camera.send(frame)
+                self.camera.send(np.ascontiguousarray(frame))
                 return
 
             # Need to resize - use cached parameters if frame size unchanged
             if (frame_h, frame_w) != self._last_frame_size:
                 self._last_frame_size = (frame_h, frame_w)
-                # Calculate scaling parameters (cache for reuse)
-                scale_w = self.width / frame_w
-                scale_h = self.height / frame_h
-                scale = min(scale_w, scale_h)
-                new_w = int(frame_w * scale)
-                new_h = int(frame_h * scale)
+                new_w, new_h = frame_transform.fit_size(frame_w, frame_h, self.width, self.height)
                 paste_x = (self.width - new_w) // 2
                 paste_y = (self.height - new_h) // 2
                 self._cached_scale_params = (new_w, new_h, paste_x, paste_y)
-                # Reset canvas to black
+                # Reset canvas to black (orientation changed: clear old borders)
                 self._canvas.fill(0)
 
             new_w, new_h, paste_x, paste_y = self._cached_scale_params
 
-            # Resize using OpenCV (much faster than PIL)
-            if HAS_CV2:
-                resized = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
-            else:
-                # Fallback: simple numpy resize (lower quality but fast)
-                resized = self._fast_resize(frame, new_w, new_h)
+            # Bilinear resize (OpenCV): much better looking than nearest-neighbour and still ~1 ms.
+            resized = frame_transform.resize(frame, new_w, new_h)
 
             # Place resized frame on canvas (letterboxing)
-            self._canvas[paste_y:paste_y+new_h, paste_x:paste_x+new_w] = resized
+            self._canvas[paste_y:paste_y + new_h, paste_x:paste_x + new_w] = resized
 
-            # Send the canvas
             self.camera.send(self._canvas)
 
         except Exception as e:
             print(f"Error sending frame: {e}")
-
-    def _fast_resize(self, frame: np.ndarray, new_w: int, new_h: int) -> np.ndarray:
-        """Fast numpy-based resize (nearest neighbor)"""
-        h, w = frame.shape[:2]
-        y_indices = (np.arange(new_h) * h // new_h).astype(int)
-        x_indices = (np.arange(new_w) * w // new_w).astype(int)
-        return frame[y_indices[:, None], x_indices]
 
     def stop(self):
         """Stops the virtual camera"""
         if self.camera:
             try:
                 self.camera.close()
-            except:
+            except Exception:
                 pass
             self.camera = None
 

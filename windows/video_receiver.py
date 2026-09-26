@@ -1,12 +1,18 @@
 """
-Receptor de video H.264 desde Android vía TLS 1.3
+H.264 video receiver: TLS 1.3 client that reads VanCamera packets and decodes them.
 """
+from __future__ import annotations
+
 import socket
 import ssl
 import struct
 import threading
-from typing import Optional, Callable
+import time
+from dataclasses import dataclass
+from typing import Callable, Optional
+
 import numpy as np
+
 from certificate_handler import CertificateHandler
 
 try:
@@ -21,40 +27,87 @@ try:
         InvalidDataError = FFmpegError = Exception  # type: ignore
 except ImportError:
     HAS_AV = False
-    print("Advertencia: PyAV no está instalado. La decodificación H.264 puede no funcionar correctamente.")
+    print("Warning: PyAV is not installed. H.264 decoding will not work.")
     InvalidDataError = FFmpegError = Exception  # type: ignore
 
 
-class VideoReceiver:
-    """Recibe y decodifica stream de video H.264"""
+# Largest packet we accept. A 1080p keyframe is well under 1 MB; anything bigger means the
+# stream is out of sync (or this is not a VanCamera server).
+MAX_PACKET_SIZE = 8 * 1024 * 1024
 
-    def __init__(self, host: str, port: int, cert_handler: CertificateHandler):
+FrameCallback = Callable[[np.ndarray, int, bool], None]
+
+
+def parse_flags(flags_byte: int):
+    """Returns (orientation_degrees, is_back_camera) from the packet flags byte."""
+    orientation_degrees = (flags_byte & 0x03) * 90
+    is_back_camera = (flags_byte & 0x80) != 0
+    return orientation_degrees, is_back_camera
+
+
+class StreamStalled(Exception):
+    """No data received for too long (dead Wi-Fi link, phone asleep...)."""
+
+
+@dataclass
+class ReceiverStats:
+    fps: float = 0.0
+    kbps: float = 0.0
+    width: int = 0
+    height: int = 0
+    frames_decoded: int = 0
+
+
+class VideoReceiver:
+    """Receives and decodes the H.264 stream from the phone."""
+
+    CONNECT_TIMEOUT_S = 5.0
+    # No data for this long = the link is dead. The phone sends ~30 packets/s while streaming,
+    # so a few seconds of silence is never normal. Before, the receiver waited forever and the
+    # picture just froze (issue #3).
+    STALL_TIMEOUT_S = 5.0
+    SOCKET_BUFFER_BYTES = 512 * 1024
+
+    def __init__(self, host: str, port: int, cert_handler: CertificateHandler,
+                 stall_timeout_s: Optional[float] = None):
         self.host = host
         self.port = port
         self.cert_handler = cert_handler
+        self.stall_timeout_s = stall_timeout_s or self.STALL_TIMEOUT_S
         self.socket: Optional[socket.socket] = None
         self.ssl_socket: Optional[ssl.SSLSocket] = None
         self.is_running = False
-        # Callback now receives (frame, orientation_degrees)
-        self.frame_callback: Optional[Callable[[np.ndarray, int], None]] = None
+        self.last_error: Optional[str] = None
+        self.frame_callback: Optional[FrameCallback] = None
+        self.disconnect_callback: Optional[Callable[[str], None]] = None
         self.receive_thread: Optional[threading.Thread] = None
 
-        # Decodificador H.264
-        self.codec_context: Optional[av.CodecContext] = None
+        # Stats
+        self._stats_lock = threading.Lock()
+        self._bytes_received = 0
+        self._frames_decoded = 0
+        self._stats_snapshot = (time.monotonic(), 0, 0)
+        self._last_size = (0, 0)
+        self._last_data_time = time.monotonic()
+
+        # H.264 decoder
+        self.codec_context = None
+        self.decode_error_count = 0
+        self.frames_decoded = 0
         if HAS_AV:
             self._init_decoder()
 
     def _init_decoder(self):
-        """Inicializa el decodificador H.264 con configuración de baja latencia"""
+        """Initializes the H.264 decoder with low-latency settings."""
         try:
             codec = av.CodecContext.create('h264', 'r')
-            # Dimensions are auto-detected from SPS/PPS in the stream
-            # Enable error concealment for partial/corrupt frames
-            codec.thread_type = 'AUTO'
+            # Dimensions are auto-detected from SPS/PPS in the stream.
+            # SLICE threading only: FRAME threading ('AUTO') buffers one frame per thread before
+            # returning anything, which adds latency.
+            codec.thread_type = 'SLICE'
 
             # === LOW LATENCY DECODER SETTINGS ===
-            # Enable low_delay mode - don't wait for B-frames or reordering
-            # Use flags and flags2 as FFmpeg decoder options
+            # Don't wait for B-frames or reordering.
             codec.options = {
                 'flags': '+low_delay',
                 'flags2': '+fast',
@@ -62,75 +115,80 @@ class VideoReceiver:
 
             self.codec_context = codec
             self.decode_error_count = 0
-            self.frames_decoded = 0
-            print(f"H.264 decoder initialized with low-latency settings")
+            print("H.264 decoder initialized with low-latency settings")
         except Exception as e:
             print(f"Error initializing decoder: {e}")
 
+    # ------------------------------------------------------------------
+    # Connection
+    # ------------------------------------------------------------------
+
     def connect(self) -> bool:
         """
-        Conecta al servidor Android
+        Connects to the Android server.
 
         Returns:
-            True si la conexión fue exitosa
+            True if the connection was successful (``last_error`` explains failures)
         """
+        self.last_error = None
         try:
-            # Crear socket TCP
-            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.socket.settimeout(10)  # 10 segundos de timeout
+            raw = socket.create_connection((self.host, self.port), timeout=self.CONNECT_TIMEOUT_S)
 
             # === LOW LATENCY NETWORK SETTINGS ===
-            # TCP_NODELAY - receive immediately, no Nagle buffering
-            self.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            # Smaller buffers - 64KB (reduces latency)
-            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 65536)
-            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 65536)
+            raw.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            raw.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            # A roomier buffer absorbs Wi-Fi bursts; we read continuously so it adds no latency.
+            raw.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, self.SOCKET_BUFFER_BYTES)
+            self.socket = raw
 
-            # Crear contexto SSL
             ssl_context = self.cert_handler.create_ssl_context(
                 verify_cert=self.cert_handler.cert_path is not None
             )
-
-            # Conectar
-            self.socket.connect((self.host, self.port))
-
-            # Envolver en SSL
             self.ssl_socket = ssl_context.wrap_socket(
-                self.socket,
+                raw,
                 server_hostname=self.host if self.cert_handler.cert_path else None
             )
+            # Short read timeout so the receive loop can notice stalls and stop requests.
+            self.ssl_socket.settimeout(1.0)
 
-            print(f"Conectado a {self.host}:{self.port}")
+            print(f"Connected to {self.host}:{self.port}")
             return True
 
+        except socket.timeout:
+            self.last_error = "Timed out. Is the phone streaming and on the same network?"
+        except ConnectionRefusedError:
+            self.last_error = "Connection refused. Tap Start streaming on the phone."
+        except ssl.SSLError as e:
+            self.last_error = f"TLS handshake failed: {e.reason or e}"
+        except OSError as e:
+            self.last_error = f"Network error: {e.strerror or e}"
         except Exception as e:
-            print(f"Error al conectar: {e}")
-            self.disconnect()
-            return False
+            self.last_error = str(e)
+        print(f"Connection error: {self.last_error}")
+        self._close_sockets()
+        return False
+
+    def _close_sockets(self):
+        for sock in (self.ssl_socket, self.socket):
+            if sock is not None:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+        self.ssl_socket = None
+        self.socket = None
 
     def disconnect(self):
-        """Desconecta del servidor"""
+        """Disconnects from the server (no disconnect callback is fired)."""
         self.is_running = False
-
-        if self.ssl_socket:
-            try:
-                self.ssl_socket.close()
-            except:
-                pass
-            self.ssl_socket = None
-
-        if self.socket:
-            try:
-                self.socket.close()
-            except:
-                pass
-            self.socket = None
-
-        if self.receive_thread and self.receive_thread.is_alive():
-            self.receive_thread.join(timeout=2)
+        self.disconnect_callback = None
+        self._close_sockets()
+        thread = self.receive_thread
+        if thread and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=2)
 
     def start_receiving(self):
-        """Inicia el hilo de recepción de datos"""
+        """Starts the receive thread."""
         if self.is_running:
             return
 
@@ -142,100 +200,100 @@ class VideoReceiver:
         if HAS_AV:
             self._init_decoder()
 
+        self._last_data_time = time.monotonic()
         self.is_running = True
-        self.receive_thread = threading.Thread(target=self._receive_loop, daemon=True)
+        self.receive_thread = threading.Thread(target=self._receive_loop, daemon=True, name="video-receive")
         self.receive_thread.start()
 
+    # ------------------------------------------------------------------
+    # Receive loop
+    # ------------------------------------------------------------------
+
     def _receive_loop(self):
-        """Loop principal de recepción de datos"""
-
-        while self.is_running and self.ssl_socket:
-            try:
-                # Leer tamaño del paquete (4 bytes)
+        """Main receive loop."""
+        reason = "Connection closed by the phone"
+        try:
+            while self.is_running:
                 size_data = self._receive_exact(4)
-                if not size_data:
+                if size_data is None:
                     break
-
                 packet_size = struct.unpack('>I', size_data)[0]
-
-                # Leer datos del paquete (includes orientation byte + H.264 data)
-                packet_data = self._receive_exact(packet_size)
-                if not packet_data:
+                if packet_size < 2 or packet_size > MAX_PACKET_SIZE:
+                    reason = f"Protocol error (packet size {packet_size})"
                     break
 
-                # Parse flags byte (first byte)
-                # Protocol: [1 byte flags][H.264 data]
-                # flags: bits 0-1 = orientation (0=0°, 1=90°, 2=180°, 3=270°)
-                #        bit 7 = mirror flag (for front camera)
-                if len(packet_data) < 2:
-                    continue  # Invalid packet
+                # Packet = [1 byte flags][H.264 data]
+                packet_data = self._receive_exact(packet_size)
+                if packet_data is None:
+                    break
 
-                flags_byte = packet_data[0]
-                orientation_code = flags_byte & 0x03  # Only use lower 2 bits for orientation
-                mirror = (flags_byte & 0x80) != 0     # Bit 7 = mirror flag
-                orientation_degrees = orientation_code * 90
-                h264_data = packet_data[1:]
+                orientation_degrees, is_back_camera = parse_flags(packet_data[0])
+                self._decode_frame(bytes(packet_data[1:]), orientation_degrees, is_back_camera)
 
-                # Decodificar frame
-                self._decode_frame(h264_data, orientation_degrees, mirror)
+        except StreamStalled:
+            reason = f"No video for {self.stall_timeout_s:.0f} s (network stalled)"
+        except Exception as e:
+            reason = f"Receive error: {e}"
 
-            except Exception as e:
-                print(f"Error en loop de recepción: {e}")
-                break
-
+        was_running = self.is_running
         self.is_running = False
-        print("Conexión cerrada")
-
-    def _receive_exact(self, size: int) -> Optional[bytes]:
-        """Recibe exactamente 'size' bytes"""
-        if not self.ssl_socket:
-            return None
-
-        data = bytearray()
-        while len(data) < size:
+        self._close_sockets()
+        print(f"Connection closed: {reason}")
+        callback = self.disconnect_callback
+        if was_running and callback:
             try:
-                chunk = self.ssl_socket.recv(size - len(data))
-                if not chunk:
-                    return None
-                data.extend(chunk)
-            except socket.timeout:
-                continue
+                callback(reason)
             except Exception as e:
-                print(f"Error al recibir datos: {e}")
+                print(f"Error in disconnect callback: {e}")
+
+    def _receive_exact(self, size: int) -> Optional[bytearray]:
+        """Receives exactly ``size`` bytes. Returns None when the connection closes."""
+        buffer = bytearray(size)
+        view = memoryview(buffer)
+        received = 0
+        while received < size:
+            sock = self.ssl_socket
+            if sock is None or not self.is_running:
                 return None
+            try:
+                count = sock.recv_into(view[received:], size - received)
+            except (socket.timeout, ssl.SSLWantReadError):
+                if time.monotonic() - self._last_data_time > self.stall_timeout_s:
+                    raise StreamStalled()
+                continue
+            except OSError:
+                return None
+            if count == 0:
+                return None
+            received += count
+            self._last_data_time = time.monotonic()
+            with self._stats_lock:
+                self._bytes_received += count
+        return buffer
 
-        return bytes(data)
-
-    def _decode_frame(self, h264_data: bytes, orientation_degrees: int = 0, mirror: bool = False):
-        """Decodifica un frame H.264 usando PyAV"""
-        if not self.frame_callback:
-            return
-
+    def _decode_frame(self, h264_data: bytes, orientation_degrees: int = 0, is_back_camera: bool = False):
+        """Decodes one H.264 access unit using PyAV."""
         if not HAS_AV or not self.codec_context:
-            print("H.264 decoder not available")
             return
 
         try:
-            # Create an AVPacket from the H.264 data
             packet = av.Packet(h264_data)
 
-            # Decode the packet - may produce 0, 1, or more frames
-            # Only process the LATEST frame to reduce latency - drop older frames
-            decoded_frames = list(self.codec_context.decode(packet))
+            # Decode the packet - may produce 0, 1, or more frames.
+            # Only use the LATEST frame to reduce latency.
+            decoded_frames = self.codec_context.decode(packet)
+            if not decoded_frames:
+                return
+            frame = decoded_frames[-1]
+            self.decode_error_count = 0
+            self.frames_decoded += len(decoded_frames)
+            with self._stats_lock:
+                self._frames_decoded += len(decoded_frames)
+                self._last_size = (frame.width, frame.height)
 
-            if decoded_frames:
-                # Only use the last (most recent) frame, skip older ones
-                frame = decoded_frames[-1]
-                self.frames_decoded += len(decoded_frames)
-                # Reset error count on successful decode
-                self.decode_error_count = 0
-
-                # Convert frame to numpy array in RGB format
-                frame_array = frame.to_ndarray(format='rgb24')
-
-                # Call callback with decoded frame, orientation, and mirror flag
-                if self.frame_callback:
-                    self.frame_callback(frame_array, orientation_degrees, mirror)
+            callback = self.frame_callback
+            if callback:
+                callback(frame.to_ndarray(format='rgb24'), orientation_degrees, is_back_camera)
 
         except (InvalidDataError, FFmpegError) as e:
             self.decode_error_count += 1
@@ -250,16 +308,39 @@ class VideoReceiver:
         except Exception as e:
             print(f"Unexpected decode error: {e}")
 
-    def set_frame_callback(self, callback: Callable[[np.ndarray, int], None]):
+    # ------------------------------------------------------------------
+    # API
+    # ------------------------------------------------------------------
+
+    def set_frame_callback(self, callback: FrameCallback):
         """
-        Establece el callback para recibir frames decodificados.
+        Sets the callback for decoded frames. It runs on the receive thread and must be quick.
 
         Args:
-            callback: Function that receives (frame: np.ndarray, orientation_degrees: int)
-                      orientation_degrees: 0, 90, 180, or 270
+            callback: function(frame_rgb: np.ndarray, orientation_degrees: int, is_back_camera: bool)
         """
         self.frame_callback = callback
 
+    def set_disconnect_callback(self, callback: Callable[[str], None]):
+        """Called once (from the receive thread) when an established stream ends unexpectedly."""
+        self.disconnect_callback = callback
+
+    def get_stats(self) -> ReceiverStats:
+        """Rates since the previous call."""
+        now = time.monotonic()
+        with self._stats_lock:
+            last_time, last_bytes, last_frames = self._stats_snapshot
+            elapsed = max(now - last_time, 1e-3)
+            stats = ReceiverStats(
+                fps=(self._frames_decoded - last_frames) / elapsed,
+                kbps=(self._bytes_received - last_bytes) * 8 / 1000 / elapsed,
+                width=self._last_size[0],
+                height=self._last_size[1],
+                frames_decoded=self._frames_decoded,
+            )
+            self._stats_snapshot = (now, self._bytes_received, self._frames_decoded)
+        return stats
+
     def is_connected(self) -> bool:
-        """Verifica si está conectado"""
+        """Checks whether the stream is active."""
         return self.is_running and self.ssl_socket is not None

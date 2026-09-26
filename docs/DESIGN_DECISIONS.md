@@ -10,7 +10,9 @@ This document explains the key technical decisions made in VanCamera.
 | Video Codec | H.264 HW | Low latency, battery efficient | VP8, MJPEG, VP9 |
 | Server Location | Android | Simpler NAT, static local IP | Windows as server |
 | Virtual Camera | OBS-VirtualCam Legacy | DirectShow support, standalone | pyvirtualcam, NDI |
-| Discovery | mDNS + USB polling | Zero-config standard | Manual IP, UDP broadcast |
+| Discovery | mDNS + USB polling + manual IP | Zero-config standard, with a fallback for managed networks | UDP broadcast, subnet scan |
+| Background streaming | Camera foreground service | Survives screen off / app closed | Keep screen on (drains battery, heats the phone) |
+| Slow network | Bounded queue, drop to next keyframe | Latency stays bounded | Unbounded buffering (grows lag, freezes) |
 | UI Framework | CustomTkinter | Native look, easy to use | PyQt, Electron |
 
 ---
@@ -73,7 +75,34 @@ This document explains the key technical decisions made in VanCamera.
 2. Windows listens with Zeroconf library
 3. Devices appear automatically in dropdown
 
-**Limitation**: mDNS may be blocked on some corporate networks. USB always works.
+**Limitation**: mDNS is often blocked on corporate/university networks. The phone shows its IP
+address and Windows can add it manually; USB always works. Windows keys Wi-Fi devices by a stable
+id from the TXT record, so the same phone is never listed twice.
+
+---
+
+## Foreground Service Instead of Keeping the Screen On
+
+**Why**: The stream used to die when the screen turned off, because the camera was tied to the
+activity. Keeping the screen on would fix that but the display is one of the biggest power and
+heat sources. A camera foreground service keeps the camera legally in use with the screen off and
+after the app is closed, and shows a notification so the user always knows the camera is active.
+
+---
+
+## Power and Heat
+
+The phone does the least work that still produces the stream:
+
+| Measure | Effect |
+|---------|--------|
+| Capture at the encoded size (720p) | The old selector could make the ISP produce 1080p/4K frames that were then cropped |
+| Cap camera at 30 fps (AE FPS range + limiter) | Some sensors run at 60 fps by default |
+| Bulk row copies into the codec buffer | Replaces ~1.4 M `ByteBuffer.get()` calls and a 1.4 MB allocation per frame |
+| MediaCodec async mode, single camera thread | No coroutine per frame, no concurrent codec access |
+| Camera/encoder only while a PC is connected | Idle "waiting" costs almost nothing |
+| Optional preview | The PC does not need the phone's screen |
+| Wake / Wi-Fi locks only while a PC is connected | No battery drain while idle |
 
 ---
 

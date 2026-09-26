@@ -18,7 +18,7 @@ sequenceDiagram
     end
     W->>W: Show device in dropdown
     Note over W: User selects device
-    W->>ADB: adb forward tcp:8443 tcp:8443
+    W->>ADB: adb -s SERIAL forward tcp:8443 tcp:8443
     ADB-->>W: Forward created
     W->>W: Connect to 127.0.0.1:8443
     ADB->>A: Tunnel traffic to :8443
@@ -50,14 +50,20 @@ sequenceDiagram
 |-------------|---------|
 | USB cable | Must be data-capable (not charge-only) |
 | USB Debugging | Enabled in Developer Options |
-| ADB | Installed and in PATH |
+| ADB | Bundled with the installer (or any platform-tools install) |
 
 ## Setup ADB
 
+The Windows installer ships `adb.exe` in `{install dir}\platform-tools`, and the app uses that
+copy directly, so USB mode works right after installing (no logoff or reboot).
+
+When running from source, VanCamera also finds adb in `PATH`, in the registry `PATH`,
+`%ANDROID_HOME%`, `%ANDROID_SDK_ROOT%`, `%LOCALAPPDATA%\Android\Sdk` or `C:\platform-tools`,
+or wherever the `VANCAMERA_ADB` environment variable points. To install it manually:
+
 1. Download [Android SDK Platform Tools](https://developer.android.com/studio/releases/platform-tools)
 2. Extract to a folder (e.g., `C:\platform-tools`)
-3. Add to PATH environment variable
-4. Verify: `adb version`
+3. Click **Refresh** in VanCamera
 
 ## Enable USB Debugging
 
@@ -83,5 +89,5 @@ sequenceDiagram
 |---------|----------|
 | "No devices found" | Check USB cable is data-capable |
 | "unauthorized" | Accept USB debugging prompt on phone |
-| ADB not found | Add platform-tools to PATH |
+| ADB not found | Reinstall VanCamera, or see [Troubleshooting](TROUBLESHOOTING.md#adb-not-found) |
 | Port forward fails | Restart ADB: `adb kill-server` |

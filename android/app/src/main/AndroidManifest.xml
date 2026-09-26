@@ -2,19 +2,27 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Permisos de cámara -->
+    <!-- Camera -->
     <uses-feature android:name="android.hardware.camera" android:required="true" />
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
 
-    <!-- Permisos de red -->
+    <!-- Network -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- Wi-Fi low-latency lock (prevents Wi-Fi power save from freezing the stream) -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Lets mDNS announcements through on devices that filter multicast packets -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
 
-    <!-- Permiso de cámara (runtime permission) -->
+    <!-- Camera permission (runtime permission) -->
     <uses-permission android:name="android.permission.CAMERA" />
 
-    <!-- Configuración de red segura para TLS -->
+    <!-- Background streaming: foreground service that owns the camera -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -31,6 +39,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTop"
             android:screenOrientation="portrait">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -38,10 +47,16 @@
             </intent-filter>
         </activity>
 
+        <!--
+            Owns the camera, encoder and TLS server. Runs as a camera foreground service
+            while streaming so the stream survives the screen turning off and the app being
+            closed / swiped away from recents.
+        -->
         <service
             android:name=".StreamingService"
             android:enabled="true"
-            android:exported="false" />
+            android:exported="false"
+            android:foregroundServiceType="camera" />
     </application>
 
 </manifest>

@@ -1,0 +1,41 @@
+<resources>
+    <string name="start_streaming">Iniciar transmisión</string>
+    <string name="stop_streaming">Detener transmisión</string>
+    <string name="switch_camera">Cambiar cámara</string>
+    <string name="toggle_preview">Mostrar u ocultar la vista previa</string>
+    <string name="grant_permission">Permitir cámara</string>
+
+    <string name="status_ready">Listo</string>
+    <string name="status_starting">Iniciando…</string>
+    <string name="status_waiting">Esperando al PC</string>
+    <string name="status_streaming">Transmitiendo a %1$s</string>
+    <string name="status_error">Algo salió mal</string>
+    <string name="status_permission">Se requiere permiso de cámara</string>
+
+    <string name="detail_ready">Toca Iniciar y luego pulsa Conectar en la app de VanCamera del PC.</string>
+    <string name="detail_waiting_usb">USB: conecta el cable y pulsa Conectar en el PC.</string>
+    <string name="detail_no_network">Wi-Fi: sin conexión. Aún puedes usar USB.</string>
+    <string name="detail_address">%1$s: %2$s</string>
+    <string name="detail_stats">%1$d fps · %2$s Mbps</string>
+    <string name="detail_background">Puedes bloquear el teléfono o cerrar la app, la transmisión continúa.</string>
+    <string name="detail_permission">VanCamera necesita la cámara para funcionar como webcam.</string>
+
+    <string name="address_wifi">Wi-Fi</string>
+    <string name="address_hotspot">Punto de acceso</string>
+    <string name="address_ethernet">Ethernet</string>
+    <string name="address_usb_tether">Anclaje USB</string>
+    <string name="address_other">Red</string>
+
+    <string name="preview_off">Vista previa apagada para ahorrar batería</string>
+    <string name="preview_off_hint">Toca el ojo para volver a encenderla</string>
+
+    <string name="notification_channel">Transmisión</string>
+    <string name="notification_channel_description">Se muestra mientras VanCamera transmite la cámara</string>
+    <string name="notification_waiting">Esperando a que el PC se conecte</string>
+    <string name="notification_streaming">Transmitiendo a %1$s</string>
+    <string name="action_stop">Detener</string>
+    <string name="action_switch_camera">Cambiar cámara</string>
+
+    <string name="error_camera_permission">Se requiere permiso de cámara</string>
+    <string name="toast_streaming_stopped">Transmisión detenida</string>
+</resources>

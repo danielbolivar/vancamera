@@ -1,208 +1,250 @@
 package com.vancamera.android
 
-import android.content.Context
 import android.util.Log
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import java.io.OutputStream
+import java.io.BufferedOutputStream
+import java.io.IOException
 import java.net.InetSocketAddress
-import java.net.ServerSocket
+import java.net.SocketException
+import java.util.concurrent.atomic.AtomicLong
 import javax.net.ssl.SSLServerSocket
 import javax.net.ssl.SSLSocket
 
 /**
- * Video streaming manager over TLS 1.3.
+ * TLS 1.3 video server.
+ *
+ * Android is the TLS server, the Windows app connects to it (directly over Wi-Fi, or through an
+ * `adb forward` tunnel over USB).
+ *
+ * Robustness changes compared to the previous single-shot `accept()`:
+ * - The server keeps accepting connections for as long as streaming is on. When the PC reconnects
+ *   (after a Wi-Fi hiccup, or after the user clicks Disconnect/Connect) the new connection simply
+ *   replaces the old one; the phone never has to be restarted.
+ * - Connections that fail the TLS handshake (port scanners and security probes that are common on
+ *   enterprise networks, half-open connections...) are closed and ignored instead of killing the
+ *   stream.
+ * - A single sender thread per client writes packets from a bounded [FrameQueue], so writes can no
+ *   longer interleave and slow networks drop frames instead of accumulating latency.
+ * - A write that stays blocked for [STALLED_WRITE_TIMEOUT_MS] (dead Wi-Fi link) drops the client so
+ *   the PC can reconnect.
  */
 class VideoStreamer(
-    private val context: Context,
-    private val connectionConfig: ConnectionConfig,
-    private val certificateManager: CertificateManager
+    private val port: Int,
+    private val certificateManager: CertificateManager,
+    private val listener: Listener
 ) {
+
+    interface Listener {
+        /** A client completed the TLS handshake. Called on a background thread. */
+        fun onClientConnected(address: String)
+
+        /** The current client went away. Called on a background thread. */
+        fun onClientDisconnected()
+
+        /** Frames were dropped: the encoder should produce a keyframe. */
+        fun onKeyFrameNeeded()
+    }
 
     companion object {
         private const val TAG = "VideoStreamer"
+        private const val HANDSHAKE_TIMEOUT_MS = 5_000
+        private const val STALLED_WRITE_TIMEOUT_MS = 5_000L
+        private const val SOCKET_BUFFER_BYTES = 256 * 1024
     }
 
+    @Volatile
+    private var running = false
     private var serverSocket: SSLServerSocket? = null
-    private var sslSocket: SSLSocket? = null
-    private var outputStream: OutputStream? = null
-    private val isConnected = MutableStateFlow(false)
-    private val connectionState: StateFlow<Boolean> = isConnected
+    private var acceptThread: Thread? = null
 
-    // mDNS service publisher for WiFi discovery
-    private val nsdPublisher = NsdServicePublisher(context)
+    @Volatile
+    private var client: ClientConnection? = null
+
+    val bytesSent = AtomicLong(0)
+    val framesSent = AtomicLong(0)
+    val framesDropped = AtomicLong(0)
+
+    val hasClient: Boolean get() = client?.isOpen == true
+    val clientAddress: String? get() = client?.address
 
     /**
-     * Observable connection state.
+     * Binds the server socket and starts accepting clients in the background.
+     * Must not be called on the main thread (certificate generation can take a while).
      */
-    fun getConnectionState(): StateFlow<Boolean> = connectionState
+    fun start() {
+        if (running) return
+        val sslContext = certificateManager.createSSLContextBlocking()
 
-    /**
-     * Starts a TLS 1.3 server socket and waits for a Windows client to connect.
-     *
-     * Note: Windows acts as the TLS client and should connect to this device's IP and port.
-     */
-    suspend fun connect() = withContext(Dispatchers.IO) {
-        try {
-            // Ensure any previous socket is closed first
-            closeAllSockets()
+        // Create UNBOUND so SO_REUSEADDR takes effect before binding (fast restart after stop).
+        val ss = sslContext.serverSocketFactory.createServerSocket() as SSLServerSocket
+        ss.reuseAddress = true
+        ss.enabledProtocols = arrayOf("TLSv1.3")
+        ss.needClientAuth = false
+        ss.bind(InetSocketAddress(port))
+        serverSocket = ss
+        running = true
 
-            Log.d(TAG, "Waiting for client on 0.0.0.0:${connectionConfig.serverPort}")
+        acceptThread = Thread({ acceptLoop(ss) }, "vancamera-accept").also {
+            it.isDaemon = true
+            it.start()
+        }
+        Log.i(TAG, "Listening on 0.0.0.0:$port")
+    }
 
-            // Create SSLContext with our certificate/private key.
-            val sslContext = certificateManager.createSSLContext()
+    private fun acceptLoop(ss: SSLServerSocket) {
+        while (running) {
+            val socket = try {
+                ss.accept() as SSLSocket
+            } catch (e: IOException) {
+                if (running) {
+                    Log.w(TAG, "accept() failed: ${e.message}")
+                    Thread.sleep(200)
+                }
+                continue
+            }
 
-            // Create UNBOUND SSL server socket first, then set options, then bind.
-            // This ensures SO_REUSEADDR takes effect before binding.
-            val ss = sslContext.serverSocketFactory.createServerSocket() as SSLServerSocket
-            ss.reuseAddress = true
-            ss.enabledProtocols = arrayOf("TLSv1.3")
-            ss.needClientAuth = false
-            ss.bind(InetSocketAddress(connectionConfig.serverPort))
+            val address = socket.inetAddress?.hostAddress ?: "unknown"
+            try {
+                socket.enabledProtocols = arrayOf("TLSv1.3")
+                // === LOW LATENCY NETWORK SETTINGS ===
+                socket.tcpNoDelay = true
+                socket.keepAlive = true
+                socket.sendBufferSize = SOCKET_BUFFER_BYTES
+                socket.soTimeout = HANDSHAKE_TIMEOUT_MS
+                socket.startHandshake()
+                socket.soTimeout = 0
+            } catch (e: Exception) {
+                // Not a VanCamera client (or a broken one): ignore it and keep listening.
+                Log.w(TAG, "Rejected connection from $address: ${e.message}")
+                try {
+                    socket.close()
+                } catch (_: Exception) {
+                }
+                continue
+            }
 
-            serverSocket = ss
-
-            // Publish mDNS service so Windows can discover us
-            nsdPublisher.publishService(connectionConfig.serverPort)
-
-            // Accept a single client connection.
-            val socket = ss.accept() as SSLSocket
-            socket.enabledProtocols = arrayOf("TLSv1.3")
-
-            // === LOW LATENCY NETWORK SETTINGS ===
-            // TCP_NODELAY - send immediately, no Nagle buffering
-            socket.tcpNoDelay = true
-            // Smaller buffers - 64KB instead of default (reduces latency)
-            socket.sendBufferSize = 65536
-            socket.receiveBufferSize = 65536
-
-            // Perform handshake.
-            socket.startHandshake()
-
-            sslSocket = socket
-            outputStream = socket.outputStream
-
-            isConnected.value = true
-            Log.d(TAG, "Client connected successfully")
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Connection error: ${e.message}", e)
-            closeAllSockets()
-            isConnected.value = false
-            throw StreamException("Failed to accept client: ${e.message}", e)
+            Log.i(TAG, "Client connected: $address")
+            val newClient = ClientConnection(socket, address)
+            val previous = synchronized(this) {
+                val old = client
+                client = newClient
+                old
+            }
+            // A new connection replaces the old one (e.g. the PC reconnected after a drop).
+            previous?.close(notify = false)
+            newClient.start()
+            listener.onClientConnected(address)
         }
     }
 
     /**
-     * Closes all sockets safely, ignoring any exceptions.
+     * Queues an encoded frame for the current client. Never blocks.
      */
-    private fun closeAllSockets() {
-        try { outputStream?.close() } catch (_: Exception) { }
-        try { sslSocket?.close() } catch (_: Exception) { }
-        try { serverSocket?.close() } catch (_: Exception) { }
-        outputStream = null
-        sslSocket = null
+    fun send(frame: EncodedFrame, flags: Int) {
+        val current = client ?: return
+        if (!current.isOpen) return
+        current.checkStalled()
+        when (current.queue.offer(StreamProtocol.frame(frame.data, flags), frame.isKeyFrame)) {
+            FrameQueue.OfferResult.QUEUED -> Unit
+            FrameQueue.OfferResult.DROPPED -> framesDropped.incrementAndGet()
+            FrameQueue.OfferResult.DROPPED_NEED_KEYFRAME -> {
+                framesDropped.incrementAndGet()
+                listener.onKeyFrameNeeded()
+            }
+        }
+    }
+
+    /** Disconnects the current client (the server keeps listening). */
+    fun dropClient() {
+        client?.close(notify = true)
+    }
+
+    /** Stops listening and disconnects the client. */
+    fun stop() {
+        running = false
+        try {
+            serverSocket?.close()
+        } catch (_: Exception) {
+        }
         serverSocket = null
+        val current = synchronized(this) {
+            val c = client
+            client = null
+            c
+        }
+        current?.close(notify = false)
+        acceptThread?.interrupt()
+        acceptThread = null
+        Log.i(TAG, "Server stopped")
     }
 
-    /**
-     * Envía datos de video codificados con metadatos de orientación y mirror.
-     * @param data H.264 encoded frame data
-     * @param orientationDegrees Device orientation in degrees (0, 90, 180, 270)
-     * @param mirror Whether to flip horizontally (for back camera fix)
-     * Returns true if sent successfully, false if connection was lost.
-     *
-     * Protocol: [4 bytes: total size][1 byte: flags][H.264 data]
-     * - flags: bits 0-1 = orientation (0=0°, 1=90°, 2=180°, 3=270°), bit 7 = mirror
-     */
-    suspend fun sendVideoData(data: ByteArray, orientationDegrees: Int = 0, mirror: Boolean = false): Boolean = withContext(Dispatchers.IO) {
-        if (!isConnected.value || outputStream == null) {
-            Log.w(TAG, "No active connection, ignoring data")
-            return@withContext false
+    private inner class ClientConnection(private val socket: SSLSocket, val address: String) {
+        val queue = FrameQueue()
+
+        @Volatile
+        var isOpen = true
+            private set
+
+        @Volatile
+        private var writeStartedAtMs = 0L
+        private val output = BufferedOutputStream(socket.outputStream, 64 * 1024)
+        private val thread = Thread({ sendLoop() }, "vancamera-sender")
+
+        fun start() {
+            thread.isDaemon = true
+            thread.start()
         }
 
-        try {
-            // Convert degrees to orientation bits (0, 1, 2, 3)
-            var flagsByte: Int = when (orientationDegrees) {
-                90 -> 1
-                180 -> 2
-                270 -> 3
-                else -> 0  // 0 degrees (landscape)
+        private fun sendLoop() {
+            try {
+                while (isOpen) {
+                    val packet = queue.poll(500) ?: continue
+                    writeStartedAtMs = System.currentTimeMillis()
+                    output.write(packet)
+                    output.flush()
+                    writeStartedAtMs = 0L
+                    bytesSent.addAndGet(packet.size.toLong())
+                    framesSent.incrementAndGet()
+                }
+            } catch (e: SocketException) {
+                if (isOpen) Log.i(TAG, "Client $address disconnected: ${e.message}")
+            } catch (e: Exception) {
+                if (isOpen) Log.w(TAG, "Send error to $address: ${e.message}")
+            } finally {
+                close(notify = true)
             }
-
-            // Add mirror flag in bit 7
-            if (mirror) {
-                flagsByte = flagsByte or 0x80
-            }
-
-            // Total packet size = 1 (flags) + data size
-            val totalSize = 1 + data.size
-            val sizeBytes = intToByteArray(totalSize)
-            outputStream?.write(sizeBytes)
-
-            // Send flags byte
-            outputStream?.write(byteArrayOf(flagsByte.toByte()))
-
-            // Send H.264 data
-            outputStream?.write(data)
-            outputStream?.flush()
-            return@withContext true
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Error sending data (connection lost): ${e.message}")
-            // Gracefully mark as disconnected - do NOT throw.
-            // This prevents app crash on "Broken pipe".
-            closeAllSockets()
-            isConnected.value = false
-            return@withContext false
         }
-    }
 
-    /**
-     * Convierte un entero a array de bytes (big-endian)
-     */
-    private fun intToByteArray(value: Int): ByteArray {
-        return byteArrayOf(
-            (value shr 24).toByte(),
-            (value shr 16).toByte(),
-            (value shr 8).toByte(),
-            value.toByte()
-        )
-    }
+        /** Detects a write stuck on a dead link (TCP may take minutes to notice). */
+        fun checkStalled() {
+            val started = writeStartedAtMs
+            if (started != 0L && System.currentTimeMillis() - started > STALLED_WRITE_TIMEOUT_MS) {
+                Log.w(TAG, "Write to $address stalled for more than ${STALLED_WRITE_TIMEOUT_MS}ms, dropping client")
+                close(notify = true)
+            }
+        }
 
-    /**
-     * Disconnects the current client and stops the server socket.
-     */
-    suspend fun disconnect() = withContext(Dispatchers.IO) {
-        Log.d(TAG, "Disconnecting...")
-
-        // Unpublish mDNS service
-        nsdPublisher.unpublishService()
-
-        closeAllSockets()
-        isConnected.value = false
-        Log.d(TAG, "Disconnected")
-    }
-
-    /**
-     * Verifica si está conectado
-     */
-    fun isConnected(): Boolean {
-        return isConnected.value && sslSocket?.isConnected == true
-    }
-
-    /**
-     * Restarts the server socket and waits again.
-     */
-    suspend fun reconnect() {
-        disconnect()
-        connect()
+        fun close(notify: Boolean) {
+            val wasCurrent: Boolean
+            synchronized(this@VideoStreamer) {
+                if (!isOpen) return
+                isOpen = false
+                wasCurrent = client === this
+                if (wasCurrent) client = null
+            }
+            queue.close()
+            // Closing a TLS socket can block while a write is stuck on a dead link, so never do
+            // it on the caller's thread (accept loop / encoder callback).
+            Thread({
+                try {
+                    socket.close()
+                } catch (_: Exception) {
+                }
+            }, "vancamera-close").apply { isDaemon = true }.start()
+            if (notify && wasCurrent) {
+                listener.onClientDisconnected()
+            }
+        }
     }
 }
 
-/**
- * Excepción personalizada para errores de transmisión
- */
 class StreamException(message: String, cause: Throwable? = null) : Exception(message, cause)

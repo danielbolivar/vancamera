@@ -4,13 +4,16 @@ Use your Android phone as a high-quality, low-latency webcam for Windows. Secure
 
 > You can download and install VanCamera for Windows and Android [here](https://github.com/danielbolivar/vancamera/releases/tag/1.0.0)
 
-> [!IMPORTANT]
-> There are a bunch of known issues, please free to help us fix them
-> You can give them a look [here](https://github.com/danielbolivar/vancamera/issues)
+> [!NOTE]
+> Found a problem? Please report it [here](https://github.com/danielbolivar/vancamera/issues).
 
 ## Features
 
 - **Auto-Discovery** - Devices appear automatically (USB and WiFi)
+- **Works with the app closed** - Streaming runs in a foreground service: lock the phone, switch apps or swipe VanCamera away and the PC keeps receiving video
+- **Cool and battery friendly** - Camera only runs while a PC is connected (or the preview is on screen), capped at 720p/30 fps, optional preview-off mode
+- **Survives network hiccups** - The PC reconnects automatically; slow Wi-Fi drops frames instead of freezing
+- **Works on office/university Wi-Fi** - Add the phone by IP when the network blocks discovery
 - **Low Latency** - Hardware H.264 encoding, optimized for real-time
 - **Secure** - TLS 1.3 encryption, safe for public networks
 - **Native** - Works with any DirectShow app (Discord, Zoom, Teams)
@@ -22,8 +25,8 @@ Use your Android phone as a high-quality, low-latency webcam for Windows. Secure
 
 **Windows:**
 - Install [OBS-VirtualCam Legacy v2.0.5](https://github.com/Fenrirthviti/obs-virtual-cam/releases/tag/2.0.5)
-- Install [Python 3.8+](https://www.python.org/downloads/)
-- Install [ADB](https://developer.android.com/studio/releases/platform-tools) (for USB mode)
+- Install [Python 3.8+](https://www.python.org/downloads/) (only when running from source)
+- [ADB](https://developer.android.com/studio/releases/platform-tools) for USB mode (bundled with the installer and found automatically, no reboot needed)
 
 **Android:**
 - Build and install the app from `android/` folder
@@ -32,7 +35,8 @@ Use your Android phone as a high-quality, low-latency webcam for Windows. Secure
 
 **Android:**
 1. Launch VanCamera
-2. Tap "Start streaming"
+2. Tap "Start streaming" (the screen shows the phone's IP address)
+3. You can now lock the phone or close the app; stop it from the notification
 
 **Windows:**
 ```powershell
@@ -43,8 +47,8 @@ python main.py
 
 ### 3. Connect
 
-1. Select your device from the dropdown
-2. Click "Start Receiving"
+1. Select your device from the dropdown (or click **Add by IP…** and type the address shown on the phone)
+2. Click **Connect**
 3. Open Discord/Zoom → Select "OBS-Camera"
 
 ## Connection Modes
@@ -53,6 +57,7 @@ python main.py
 |------|----------|-------|
 | **USB** | Lowest latency, most reliable | Connect USB cable, enable USB debugging |
 | **WiFi** | Wireless freedom | Same network, device appears when streaming |
+| **WiFi (manual IP)** | Office / university networks that block discovery | Click "Add by IP…" and type the address shown on the phone |
 
 ## Documentation
 
@@ -102,7 +107,22 @@ cd android
 - Windows 10+
 - Python 3.8+
 - OBS-VirtualCam Legacy v2.0.5
-- ADB (for USB mode)
+- ADB (for USB mode, bundled with the installer)
+
+## Running the Tests
+
+**Android** (JVM unit tests: YUV conversion, packet framing, frame dropping, FPS limiting):
+```bash
+cd android
+./gradlew testDebugUnitTest
+```
+
+**Windows** (includes end-to-end tests against a fake phone that streams real H.264 over TLS):
+```bash
+cd windows
+pip install -r requirements.txt -r requirements-dev.txt
+python -m pytest tests
+```
 
 ## License
 

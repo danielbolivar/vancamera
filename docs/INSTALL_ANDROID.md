@@ -50,8 +50,22 @@ The app requires these permissions:
 |------------|---------|
 | CAMERA | Video capture |
 | INTERNET | Network streaming |
+| POST_NOTIFICATIONS (Android 13+) | Ongoing "Streaming" notification with Stop / Switch camera |
+| FOREGROUND_SERVICE_CAMERA | Keep streaming with the screen off or the app closed |
+| WAKE_LOCK | Keep CPU and Wi-Fi awake while a PC is connected |
+| CHANGE_WIFI_MULTICAST_STATE | mDNS discovery on devices that filter multicast |
 
-Grant permissions when prompted on first launch.
+Grant permissions when prompted on first launch. The notification permission is optional: without
+it streaming still works, you just won't see the notification.
+
+## Background Streaming
+
+After tapping **Start streaming** you can lock the phone, open other apps or swipe VanCamera away
+from recents; the PC keeps receiving video. Stop it from the app or from the notification.
+
+Some manufacturers kill background apps aggressively. If streaming stops after a while with the
+screen off, open *Settings → Apps → VanCamera → Battery* and choose **Unrestricted** /
+**Don't optimize**.
 
 ## Enable USB Debugging (for USB mode)
 
@@ -67,13 +81,15 @@ Grant permissions when prompted on first launch.
 1. Launch VanCamera app
 2. Grant camera permission
 3. You should see camera preview
-4. Status shows "Disconnected"
+4. Status shows "Ready"
+5. Tap **Start streaming**: status shows "Waiting for the PC" and the phone's IP address
 
 ## Troubleshooting
 
 | Problem | Solution |
 |---------|----------|
 | Camera permission denied | Settings → Apps → VanCamera → Permissions |
-| Black preview | Try switching front/back camera |
+| Black preview | Try switching front/back camera, or check the preview (eye) button is on |
+| Streaming stops with screen off | Set battery usage to Unrestricted (see above) |
 | Build fails | File → Invalidate Caches and Restart |
 | Gradle sync fails | Check internet connection |

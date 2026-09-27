@@ -72,7 +72,7 @@ class CertificateManager(private val context: Context) {
             if (certFile.exists()) {
                 try {
                     val certFactory = java.security.cert.CertificateFactory.getInstance("X.509")
-                    val cert = certFactory.generateCertificate(certFile.inputStream())
+                    val cert = certFile.inputStream().use { certFactory.generateCertificate(it) }
                     return@withContext cert
                 } catch (e: Exception) {
                     // Si falla, generar uno nuevo
@@ -140,7 +140,7 @@ class CertificateManager(private val context: Context) {
         keystore.setKeyEntry(KEY_ALIAS, keyPair.private, KEYSTORE_PASSWORD.toCharArray(), certChain)
 
         val keystoreFile = File(context.filesDir, KEYSTORE_FILE)
-        keystore.store(keystoreFile.outputStream(), KEYSTORE_PASSWORD.toCharArray())
+        keystoreFile.outputStream().use { keystore.store(it, KEYSTORE_PASSWORD.toCharArray()) }
 
         // Guardar certificado público en archivo para compartir con Windows
         savePublicCertificate(cert)
@@ -218,13 +218,20 @@ class CertificateManager(private val context: Context) {
      * Crea un SSLContext configurado con el certificado y clave privada
      */
     suspend fun createSSLContext(): SSLContext = withContext(Dispatchers.IO) {
+        createSSLContextBlocking()
+    }
+
+    /**
+     * Blocking variant of [createSSLContext] for callers already on a background thread.
+     */
+    fun createSSLContextBlocking(): SSLContext {
         val keystoreFile = File(context.filesDir, KEYSTORE_FILE)
         if (!keystoreFile.exists()) {
-            getOrCreateCertificate() // Esto creará el keystore
+            generateNewCertificate() // Creates the keystore
         }
 
         val keystore = KeyStore.getInstance(KEYSTORE_TYPE)
-        keystore.load(keystoreFile.inputStream(), KEYSTORE_PASSWORD.toCharArray())
+        keystoreFile.inputStream().use { keystore.load(it, KEYSTORE_PASSWORD.toCharArray()) }
 
         val keyManagerFactory = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm())
         keyManagerFactory.init(keystore, KEYSTORE_PASSWORD.toCharArray())
@@ -232,7 +239,7 @@ class CertificateManager(private val context: Context) {
         val sslContext = SSLContext.getInstance("TLSv1.3")
         sslContext.init(keyManagerFactory.keyManagers, null, SecureRandom())
 
-        sslContext
+        return sslContext
     }
 
     /**
@@ -245,8 +252,8 @@ class CertificateManager(private val context: Context) {
                 return@withContext null
             }
 
-            val keystore = KeyStore.getInstance("JKS")
-            keystore.load(keystoreFile.inputStream(), KEYSTORE_PASSWORD.toCharArray())
+            val keystore = KeyStore.getInstance(KEYSTORE_TYPE)
+            keystoreFile.inputStream().use { keystore.load(it, KEYSTORE_PASSWORD.toCharArray()) }
 
             if (keystore.containsAlias(KEY_ALIAS)) {
                 val entry = keystore.getEntry(KEY_ALIAS,

@@ -1,23 +1,19 @@
-# VanCamera Windows - Dependencias Python
+# VanCamera Windows - Python dependencies
 
-# Interfaz gráfica
+# GUI
 customtkinter>=5.2.0
 Pillow>=10.0.0
 
-# Procesamiento de video
+# Video processing
 opencv-python>=4.8.0
 av>=10.0.0
 numpy>=1.24.0
-Pillow>=10.0.0
 
-# Cámara virtual
+# Virtual camera
 pyvirtualcam>=0.11.0
 
-# Networking y seguridad
+# Networking and security
 cryptography>=41.0.0
 
 # Device discovery
 zeroconf>=0.131.0
-
-# Utilidades
-numpy>=1.24.0

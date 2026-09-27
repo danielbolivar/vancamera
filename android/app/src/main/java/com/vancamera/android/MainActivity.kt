@@ -1,53 +1,90 @@
 package com.vancamera.android
 
 import android.Manifest
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.ServiceConnection
 import android.content.pm.PackageManager
-import android.content.res.Configuration
+import android.content.res.ColorStateList
+import android.os.Build
 import android.os.Bundle
-import android.view.OrientationEventListener
-import android.view.Surface
+import android.os.IBinder
+import android.view.View
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.ContextCompat
 import androidx.camera.view.PreviewView
+import androidx.core.content.ContextCompat
+import androidx.core.content.edit
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import com.google.android.material.button.MaterialButton
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
+import java.util.Locale
 
 /**
- * Main activity for VanCamera Android.
+ * Main screen. It is only a remote control for [StreamingService]: the service owns the camera
+ * and keeps streaming after this activity is closed.
  */
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var cameraManager: CameraManager
-    private lateinit var h264Encoder: H264Encoder
-    private lateinit var videoStreamer: VideoStreamer
-    private lateinit var certificateManager: CertificateManager
+    companion object {
+        private const val PREFS = "vancamera"
+        private const val PREF_PREVIEW = "preview_enabled"
+    }
 
-    private var videoConfig: VideoConfig = VideoConfig.fromPreset(VideoPreset.PRESET_720P_30FPS)
-    private var connectionConfig: ConnectionConfig = ConnectionConfig.default()
-    private var isStreaming = false
-    private var previewView: PreviewView? = null
-    private var connectionObserverJob: Job? = null
+    private lateinit var previewView: PreviewView
+    private lateinit var previewOff: View
+    private lateinit var statusDot: View
+    private lateinit var statusText: TextView
+    private lateinit var detailText: TextView
+    private lateinit var streamButton: MaterialButton
+    private lateinit var flipButton: MaterialButton
+    private lateinit var previewButton: MaterialButton
 
-    // Orientation tracking: stores current device rotation in degrees (0, 90, 180, 270)
-    @Volatile
-    private var currentOrientationDegrees: Int = 0
-    private var orientationEventListener: OrientationEventListener? = null
+    private var service: StreamingService? = null
+    private var bound = false
+    private var stateJob: Job? = null
+    private var previewEnabled = true
+    private var lastPhase: StreamingService.Phase? = null
 
-    private lateinit var statusText: android.widget.TextView
-    private lateinit var streamButton: com.google.android.material.button.MaterialButton
-
-    private val requestPermissionLauncher = registerForActivityResult(
+    private val requestCameraPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        if (isGranted) {
-            initializeCamera()
+    ) { granted ->
+        if (granted) {
+            attachPreview()
         } else {
-            Toast.makeText(this, "Camera permission is required", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, R.string.error_camera_permission, Toast.LENGTH_LONG).show()
+        }
+        render(service?.state?.value ?: StreamingService.State())
+    }
+
+    // Notifications are optional: streaming works without them, the user just won't see the
+    // ongoing notification with the Stop button.
+    private val requestNotificationPermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { }
+
+    private val connection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName, binder: IBinder) {
+            val svc = (binder as StreamingService.LocalBinder).service
+            service = svc
+            svc.refreshAddresses()
+            attachPreview()
+            stateJob?.cancel()
+            stateJob = lifecycleScope.launch {
+                repeatOnLifecycle(Lifecycle.State.STARTED) {
+                    svc.state.collect { render(it) }
+                }
+            }
+        }
+
+        override fun onServiceDisconnected(name: ComponentName) {
+            service = null
         }
     }
 
@@ -55,211 +92,159 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        certificateManager = CertificateManager(this)
         previewView = findViewById(R.id.previewView)
+        previewOff = findViewById(R.id.previewOff)
+        statusDot = findViewById(R.id.statusDot)
         statusText = findViewById(R.id.tvStatus)
+        detailText = findViewById(R.id.tvDetail)
         streamButton = findViewById(R.id.btnStream)
+        flipButton = findViewById(R.id.btnFlipCamera)
+        previewButton = findViewById(R.id.btnPreview)
 
-        // Initialize orientation listener to track device rotation
-        initOrientationListener()
+        // PERFORMANCE mode uses a SurfaceView: cheaper to compose than a TextureView.
+        previewView.implementationMode = PreviewView.ImplementationMode.PERFORMANCE
+        previewEnabled = getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(PREF_PREVIEW, true)
 
-        // Check permissions.
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
-            == PackageManager.PERMISSION_GRANTED) {
-            initializeCamera()
+        streamButton.setOnClickListener { onStreamButton() }
+        flipButton.setOnClickListener { service?.switchCamera() }
+        previewButton.setOnClickListener { togglePreview() }
+
+        if (!hasCameraPermission()) {
+            requestCameraPermission.launch(Manifest.permission.CAMERA)
+        }
+        render(StreamingService.State())
+    }
+
+    override fun onStart() {
+        super.onStart()
+        bound = bindService(Intent(this, StreamingService::class.java), connection, Context.BIND_AUTO_CREATE)
+    }
+
+    override fun onStop() {
+        // The preview is only useful while visible: detaching it lets the service turn the camera
+        // off completely (or keep only the encoder path while a PC is connected).
+        service?.setPreviewSurfaceProvider(null)
+        stateJob?.cancel()
+        stateJob = null
+        if (bound) {
+            unbindService(connection)
+            bound = false
+        }
+        service = null
+        super.onStop()
+    }
+
+    private fun hasCameraPermission() =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+
+    private fun attachPreview() {
+        val svc = service ?: return
+        val show = previewEnabled && hasCameraPermission()
+        svc.setPreviewSurfaceProvider(if (show) previewView.surfaceProvider else null)
+        previewView.visibility = if (show) View.VISIBLE else View.INVISIBLE
+        previewOff.visibility = if (previewEnabled || !hasCameraPermission()) View.GONE else View.VISIBLE
+        previewButton.setIconResource(if (previewEnabled) R.drawable.ic_visibility else R.drawable.ic_visibility_off)
+    }
+
+    private fun togglePreview() {
+        previewEnabled = !previewEnabled
+        getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit { putBoolean(PREF_PREVIEW, previewEnabled) }
+        attachPreview()
+    }
+
+    private fun onStreamButton() {
+        if (!hasCameraPermission()) {
+            requestCameraPermission.launch(Manifest.permission.CAMERA)
+            return
+        }
+        val state = service?.state?.value ?: StreamingService.State()
+        if (state.isActive) {
+            service?.stopStreaming()
+            Toast.makeText(this, R.string.toast_streaming_stopped, Toast.LENGTH_SHORT).show()
         } else {
-            requestPermissionLauncher.launch(Manifest.permission.CAMERA)
-        }
-
-        // Configure UI listeners.
-        setupUI()
-    }
-
-    /**
-     * Initialize orientation event listener to continuously track device rotation.
-     *
-     * Note: Camera sensor is typically mounted at 90° offset from the phone's natural
-     * orientation. We compensate for this by mapping:
-     * - Portrait (phone upright) → send 90° so Windows rotates the landscape camera output
-     * - Landscape → send 0° (camera output matches display)
-     */
-    private fun initOrientationListener() {
-        orientationEventListener = object : OrientationEventListener(this) {
-            override fun onOrientationChanged(orientation: Int) {
-                if (orientation == ORIENTATION_UNKNOWN) return
-
-                // Map device orientation to rotation needed for correct display.
-                // Camera sensor outputs landscape when phone is portrait, so we offset by 90°.
-                currentOrientationDegrees = when {
-                    orientation >= 315 || orientation < 45 -> 90     // Portrait → rotate 90°
-                    orientation >= 45 && orientation < 135 -> 180    // Landscape (top-left) → rotate 180°
-                    orientation >= 135 && orientation < 225 -> 270   // Portrait upside-down → rotate 270°
-                    orientation >= 225 && orientation < 315 -> 0     // Landscape (top-right) → no rotation
-                    else -> 90
-                }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
-        }
-        if (orientationEventListener?.canDetectOrientation() == true) {
-            orientationEventListener?.enable()
+            StreamingService.start(this)
         }
     }
 
-    private fun setupUI() {
-        streamButton.setOnClickListener {
-            if (isStreaming) stopStreaming() else startStreaming()
+    private fun render(state: StreamingService.State) {
+        if (!hasCameraPermission()) {
+            setStatus(R.color.status_error, getString(R.string.status_permission), getString(R.string.detail_permission))
+            streamButton.setText(R.string.grant_permission)
+            streamButton.setIconResource(R.drawable.ic_videocam)
+            streamButton.backgroundTintList = ColorStateList.valueOf(ContextCompat.getColor(this, R.color.brand_blue))
+            return
         }
 
-        findViewById<com.google.android.material.button.MaterialButton>(R.id.btnFlipCamera)
-            .setOnClickListener {
-                lifecycleScope.launch {
-                    try {
-                        if (::cameraManager.isInitialized) {
-                            cameraManager.switchCamera()
-                        }
-                    } catch (e: Exception) {
-                        Toast.makeText(this@MainActivity, "Failed to switch camera: ${e.message}", Toast.LENGTH_SHORT).show()
-                    }
+        when (state.phase) {
+            StreamingService.Phase.IDLE -> setStatus(
+                R.color.status_idle, getString(R.string.status_ready), getString(R.string.detail_ready)
+            )
+            StreamingService.Phase.STARTING -> setStatus(
+                R.color.status_waiting, getString(R.string.status_starting), ""
+            )
+            StreamingService.Phase.LISTENING -> setStatus(
+                R.color.status_waiting, getString(R.string.status_waiting),
+                buildString {
+                    appendLine(addressLines(state))
+                    appendLine(getString(R.string.detail_waiting_usb))
+                    append(getString(R.string.detail_background))
                 }
-            }
-    }
-
-    private fun initializeCamera() {
-        lifecycleScope.launch {
-            try {
-                cameraManager = CameraManager(this@MainActivity, this@MainActivity)
-                cameraManager.initialize(videoConfig, previewView)
-
-                // Set callback to receive frames.
-                cameraManager.setFrameCallback { imageProxy ->
-                    if (isStreaming) {
-                        // encodeFrame is a suspend function; run it in a coroutine.
-                        lifecycleScope.launch {
-                            h264Encoder.encodeFrame(imageProxy)
-                        }
-                    } else {
-                        imageProxy.close()
-                    }
+            )
+            StreamingService.Phase.STREAMING -> setStatus(
+                R.color.status_live,
+                getString(R.string.status_streaming, state.clientAddress ?: ""),
+                buildString {
+                    appendLine(
+                        getString(
+                            R.string.detail_stats, state.fps,
+                            String.format(Locale.getDefault(), "%.1f", state.kbps / 1000f)
+                        )
+                    )
+                    append(getString(R.string.detail_background))
                 }
-            } catch (e: Exception) {
-                Toast.makeText(this@MainActivity,
-                    "Failed to initialize camera: ${e.message}",
-                    Toast.LENGTH_LONG).show()
-            }
+            )
+            StreamingService.Phase.ERROR -> setStatus(
+                R.color.status_error, getString(R.string.status_error), state.error ?: ""
+            )
         }
+
+        val active = state.isActive
+        streamButton.setText(if (active) R.string.stop_streaming else R.string.start_streaming)
+        streamButton.setIconResource(if (active) R.drawable.ic_stop else R.drawable.ic_videocam)
+        streamButton.backgroundTintList = ColorStateList.valueOf(
+            ContextCompat.getColor(this, if (active) R.color.stop_red else R.color.brand_blue)
+        )
+
+        if (lastPhase == StreamingService.Phase.STARTING && state.phase == StreamingService.Phase.LISTENING) {
+            service?.refreshAddresses()
+        }
+        lastPhase = state.phase
     }
 
-    private fun startStreaming() {
-        lifecycleScope.launch {
-            try {
-                // Update UI immediately: we are starting / listening.
-                isStreaming = true
-                streamButton.text = "Stop streaming"
-                statusText.text = "Listening..."
-
-                // Always use fixed landscape resolution for the encoder.
-                // Orientation is handled by sending metadata to Windows, which rotates the frame.
-                videoConfig = VideoConfig.fromPreset(VideoPreset.PRESET_720P_30FPS)
-
-                // Initialize encoder.
-                h264Encoder = H264Encoder(videoConfig).apply {
-                    initialize()
-                    setEncodedFrameCallback { encodedData ->
-                        val orientation = currentOrientationDegrees
-                        val isBackCamera = !cameraManager.isFrontCamera()
-
-                        // Send isBackCamera as the "mirror" flag to tell Windows
-                        // which camera is being used for different rotation handling
-                        lifecycleScope.launch {
-                            videoStreamer.sendVideoData(encodedData, orientation, mirror = isBackCamera)
-                        }
-                    }
-                }
-
-                // Initialize streamer.
-                certificateManager = CertificateManager(this@MainActivity)
-                videoStreamer = VideoStreamer(
-                    this@MainActivity,
-                    connectionConfig,
-                    certificateManager
-                )
-
-                // Connect (blocks until client connects).
-                videoStreamer.connect()
-
-                // NOW that we are connected, set up the observer to detect disconnection.
-                // Use drop(1) to skip the current value and only react to CHANGES.
-                connectionObserverJob?.cancel()
-                connectionObserverJob = lifecycleScope.launch {
-                    videoStreamer.getConnectionState()
-                        .drop(1)  // Skip initial value, only react to changes
-                        .collectLatest { connected ->
-                            if (!connected && isStreaming) {
-                                // Connection was lost while streaming.
-                                runOnUiThread {
-                                    isStreaming = false
-                                    streamButton.text = "Start streaming"
-                                    statusText.text = "Disconnected"
-                                    Toast.makeText(
-                                        this@MainActivity,
-                                        "Connection lost",
-                                        Toast.LENGTH_SHORT
-                                    ).show()
-                                }
-                            }
-                        }
-                }
-
-                statusText.text = "Connected"
-                Toast.makeText(this@MainActivity, "Streaming started", Toast.LENGTH_SHORT).show()
-            } catch (e: Exception) {
-                isStreaming = false
-                connectionObserverJob?.cancel()
-                streamButton.text = "Start streaming"
-                statusText.text = "Disconnected"
-                Toast.makeText(this@MainActivity,
-                    "Failed to start streaming: ${e.message}",
-                    Toast.LENGTH_LONG).show()
+    private fun addressLines(state: StreamingService.State): String {
+        if (state.addresses.isEmpty()) return getString(R.string.detail_no_network)
+        return state.addresses.joinToString("\n") { address ->
+            val label = when (address.kind) {
+                LocalAddress.Kind.WIFI -> R.string.address_wifi
+                LocalAddress.Kind.HOTSPOT -> R.string.address_hotspot
+                LocalAddress.Kind.ETHERNET -> R.string.address_ethernet
+                LocalAddress.Kind.USB_TETHER -> R.string.address_usb_tether
+                LocalAddress.Kind.OTHER -> R.string.address_other
             }
+            getString(R.string.detail_address, getString(label), "${address.ip}:${state.port}")
         }
     }
 
-    private fun stopStreaming() {
-        lifecycleScope.launch {
-            try {
-                connectionObserverJob?.cancel()
-                connectionObserverJob = null
-                if (::h264Encoder.isInitialized) {
-                    h264Encoder.release()
-                }
-                if (::videoStreamer.isInitialized) {
-                    videoStreamer.disconnect()
-                }
-                isStreaming = false
-                streamButton.text = "Start streaming"
-                statusText.text = "Disconnected"
-                Toast.makeText(this@MainActivity, "Streaming stopped", Toast.LENGTH_SHORT).show()
-            } catch (e: Exception) {
-                Toast.makeText(this@MainActivity,
-                    "Failed to stop streaming: ${e.message}",
-                    Toast.LENGTH_LONG).show()
-            }
-        }
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        orientationEventListener?.disable()
-        orientationEventListener = null
-        if (::cameraManager.isInitialized) {
-            cameraManager.release()
-        }
-        if (::h264Encoder.isInitialized) {
-            h264Encoder.release()
-        }
-        if (::videoStreamer.isInitialized) {
-            lifecycleScope.launch {
-                videoStreamer.disconnect()
-            }
-        }
+    private fun setStatus(colorRes: Int, title: String, detail: String) {
+        statusDot.backgroundTintList = ColorStateList.valueOf(ContextCompat.getColor(this, colorRes))
+        statusText.text = title
+        detailText.text = detail
+        detailText.visibility = if (detail.isEmpty()) View.GONE else View.VISIBLE
     }
 }

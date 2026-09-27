@@ -44,8 +44,8 @@ import kotlin.coroutines.resumeWithException
 class CameraManager(
     private val context: Context,
     private val lifecycleOwner: LifecycleOwner,
-    private val targetSize: Size,
-    private val targetFps: Int
+    private var targetSize: Size,
+    private var targetFps: Int
 ) {
     companion object {
         private const val TAG = "CameraManager"
@@ -88,6 +88,27 @@ class CameraManager(
         rebind()
     }
 
+    /** Changes the capture size and frame rate (stream quality preset). */
+    fun setStreamFormat(size: Size, fps: Int) {
+        if (size == targetSize && fps == targetFps) return
+        targetSize = size
+        targetFps = fps
+        rebind()
+    }
+
+    /** Highest auto-exposure frame rate the current camera supports (30 if unknown). */
+    @SuppressLint("UnsafeOptInUsageError")
+    @androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
+    fun maxSupportedFps(): Int = try {
+        val provider = cameraProvider
+        val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
+        provider?.let { selector.filter(it.availableCameraInfos).firstOrNull() }
+            ?.let { Camera2CameraInfo.from(it).getCameraCharacteristic(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES) }
+            ?.maxOfOrNull { it.upper } ?: 30
+    } catch (e: Exception) {
+        30
+    }
+
     /** Switches between front and back cameras. */
     fun switchCamera() {
         val next = if (lensFacing == CameraSelector.LENS_FACING_BACK) {
@@ -112,7 +133,7 @@ class CameraManager(
         val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
         val fpsRange = selectFpsRange(provider, selector)
 
-        // Ask for the stream size we encode (720p) instead of the largest 16:9 size: the old
+        // Ask for the stream size we encode (720p/1080p) instead of the largest 16:9 size: the old
         // selector could make the camera produce 1080p/4K YUV frames just to crop them.
         val resolutionSelector = ResolutionSelector.Builder()
             .setAspectRatioStrategy(

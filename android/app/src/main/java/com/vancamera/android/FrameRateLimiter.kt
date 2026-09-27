@@ -35,14 +35,20 @@ class FrameRateLimiter(targetFps: Int) {
  * Picks the camera auto-exposure FPS range to request.
  *
  * Prefers a range whose upper bound equals the target (so the sensor never runs at 60 fps and
- * heats the phone), and among those the one with the highest lower bound (steady frame rate for
- * a webcam).
+ * heats the phone). Among those it takes the lowest lower bound that is still at least
+ * [MIN_FPS]: a fixed 30-30 range caps exposure at 1/30 s, which makes indoor and evening video
+ * dark and noisy, while 15-30 lets the camera expose longer in low light like a real webcam.
  */
 object FpsRangeSelector {
+    const val MIN_FPS = 15
+
     fun select(ranges: List<Pair<Int, Int>>, targetFps: Int): Pair<Int, Int>? {
         if (ranges.isEmpty()) return null
         val exact = ranges.filter { it.second == targetFps }
-        if (exact.isNotEmpty()) return exact.maxByOrNull { it.first }
+        if (exact.isNotEmpty()) {
+            return exact.filter { it.first >= MIN_FPS }.minByOrNull { it.first }
+                ?: exact.maxByOrNull { it.first }
+        }
         // Otherwise the smallest upper bound that still reaches the target...
         val above = ranges.filter { it.second > targetFps }
         if (above.isNotEmpty()) {

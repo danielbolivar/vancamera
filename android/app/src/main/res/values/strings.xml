@@ -38,6 +38,12 @@
     <string name="action_stop">Stop</string>
     <string name="action_switch_camera">Switch camera</string>
 
+    <string name="quality_button">Quality: %1$s</string>
+    <string name="quality_title">Stream quality (saved on this phone)</string>
+    <string name="quality_hd_30">720p · 30 fps — video calls, coolest</string>
+    <string name="quality_fhd_30">1080p · 30 fps — sharper, warmer phone</string>
+    <string name="quality_hd_60">720p · 60 fps — smooth motion for OBS, uses more battery</string>
+
     <string name="error_camera_permission">Camera permission is required</string>
     <string name="toast_streaming_stopped">Streaming stopped</string>
 </resources>

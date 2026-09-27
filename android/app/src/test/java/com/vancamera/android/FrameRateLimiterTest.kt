@@ -37,9 +37,15 @@ class FrameRateLimiterTest {
     }
 
     @Test
-    fun fpsRangePrefersSteadyTargetRange() {
+    fun fpsRangeLetsExposureStretchInLowLight() {
         val ranges = listOf(15 to 15, 7 to 30, 30 to 30, 15 to 30, 60 to 60, 30 to 60)
-        assertEquals(30 to 30, FpsRangeSelector.select(ranges, 30))
+        assertEquals(15 to 30, FpsRangeSelector.select(ranges, 30))
+    }
+
+    @Test
+    fun fpsRangeNeverDropsBelowMinimum() {
+        assertEquals(30 to 30, FpsRangeSelector.select(listOf(7 to 30, 30 to 30), 30))
+        assertEquals(10 to 30, FpsRangeSelector.select(listOf(7 to 30, 10 to 30), 30))
     }
 
     @Test

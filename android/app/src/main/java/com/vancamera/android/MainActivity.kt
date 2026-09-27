@@ -22,6 +22,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.google.android.material.button.MaterialButton
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import java.util.Locale
@@ -45,6 +46,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var streamButton: MaterialButton
     private lateinit var flipButton: MaterialButton
     private lateinit var previewButton: MaterialButton
+    private lateinit var qualityButton: MaterialButton
 
     private var service: StreamingService? = null
     private var bound = false
@@ -100,6 +102,7 @@ class MainActivity : AppCompatActivity() {
         streamButton = findViewById(R.id.btnStream)
         flipButton = findViewById(R.id.btnFlipCamera)
         previewButton = findViewById(R.id.btnPreview)
+        qualityButton = findViewById(R.id.btnQuality)
 
         // PERFORMANCE mode uses a SurfaceView: cheaper to compose than a TextureView.
         previewView.implementationMode = PreviewView.ImplementationMode.PERFORMANCE
@@ -108,6 +111,7 @@ class MainActivity : AppCompatActivity() {
         streamButton.setOnClickListener { onStreamButton() }
         flipButton.setOnClickListener { service?.switchCamera() }
         previewButton.setOnClickListener { togglePreview() }
+        qualityButton.setOnClickListener { showQualityDialog() }
 
         if (!hasCameraPermission()) {
             requestCameraPermission.launch(Manifest.permission.CAMERA)
@@ -152,6 +156,28 @@ class MainActivity : AppCompatActivity() {
         attachPreview()
     }
 
+    private fun showQualityDialog() {
+        val svc = service ?: return
+        val state = svc.state.value
+        val options = state.availableQualities
+        val labels = options.map {
+            getString(
+                when (it) {
+                    StreamQuality.HD_30 -> R.string.quality_hd_30
+                    StreamQuality.FHD_30 -> R.string.quality_fhd_30
+                    StreamQuality.HD_60 -> R.string.quality_hd_60
+                }
+            )
+        }.toTypedArray()
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.quality_title)
+            .setSingleChoiceItems(labels, options.indexOf(state.quality)) { dialog, which ->
+                svc.setQuality(options[which])
+                dialog.dismiss()
+            }
+            .show()
+    }
+
     private fun onStreamButton() {
         if (!hasCameraPermission()) {
             requestCameraPermission.launch(Manifest.permission.CAMERA)
@@ -173,6 +199,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun render(state: StreamingService.State) {
+        qualityButton.text = getString(R.string.quality_button, state.quality.label)
         if (!hasCameraPermission()) {
             setStatus(R.color.status_error, getString(R.string.status_permission), getString(R.string.detail_permission))
             streamButton.setText(R.string.grant_permission)

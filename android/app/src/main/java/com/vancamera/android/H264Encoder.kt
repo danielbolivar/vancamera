@@ -119,10 +119,11 @@ class H264Encoder(
             setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, iFrameIntervalSec)
 
             // === LOW LATENCY SETTINGS ===
-            // Baseline profile: no B-frames (B-frames add decoder delay on the PC).
+            // High profile (CABAC, 8x8 transforms) gives noticeably cleaner video than Baseline at
+            // the same bitrate; B-frames stay off below, so it adds no decoder delay on the PC.
             if (withProfile) {
-                setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline)
-                setInteger(MediaFormat.KEY_LEVEL, MediaCodecInfo.CodecProfileLevel.AVCLevel31)
+                setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.AVCProfileHigh)
+                setInteger(MediaFormat.KEY_LEVEL, MediaCodecInfo.CodecProfileLevel.AVCLevel4)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 setInteger(MediaFormat.KEY_MAX_B_FRAMES, 0)

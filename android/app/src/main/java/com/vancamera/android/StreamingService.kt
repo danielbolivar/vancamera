@@ -17,7 +17,6 @@ import android.os.IBinder
 import android.os.PowerManager
 import android.os.SystemClock
 import android.util.Log
-import android.util.Size
 import android.view.OrientationEventListener
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
@@ -60,9 +59,6 @@ class StreamingService : LifecycleService() {
         private const val NOTIFICATION_ID = 1
 
         const val SERVER_PORT = 8443
-        private val STREAM_SIZE = Size(1280, 720)
-        private const val FPS = 30
-        private const val BITRATE = 2_500_000
         private const val I_FRAME_INTERVAL_S = 2
         private const val WAKE_LOCK_TIMEOUT_MS = 8 * 60 * 60 * 1000L
         private const val ENCODER_RETRY_DELAY_MS = 2_000L
@@ -89,6 +85,8 @@ class StreamingService : LifecycleService() {
         val fps: Int = 0,
         val kbps: Int = 0,
         val frontCamera: Boolean = false,
+        val quality: StreamQuality = StreamQuality.DEFAULT,
+        val availableQualities: List<StreamQuality> = listOf(StreamQuality.DEFAULT),
         val error: String? = null
     ) {
         val isActive: Boolean get() = phase == Phase.STARTING || phase == Phase.LISTENING || phase == Phase.STREAMING
@@ -117,7 +115,11 @@ class StreamingService : LifecycleService() {
 
     @Volatile
     private var encoderSessionRequested = false
-    private val frameRateLimiter = FrameRateLimiter(FPS)
+    // Read on the camera thread, replaced on the main thread when the preset changes.
+    @Volatile
+    private var quality = StreamQuality.DEFAULT
+    @Volatile
+    private var frameRateLimiter = FrameRateLimiter(quality.fps)
     private var encoderRetryAtMs = 0L
 
     @Volatile
@@ -131,13 +133,16 @@ class StreamingService : LifecycleService() {
 
     override fun onCreate() {
         super.onCreate()
-        cameraManager = CameraManager(this, this, STREAM_SIZE, FPS)
-        _state.update { it.copy(addresses = NetworkAddresses.list()) }
+        quality = StreamQuality.load(this)
+        frameRateLimiter = FrameRateLimiter(quality.fps)
+        cameraManager = CameraManager(this, this, quality.size, quality.fps)
+        _state.update { it.copy(addresses = NetworkAddresses.list(), quality = quality) }
         lifecycleScope.launch {
             try {
                 cameraManager.initialize()
                 cameraReady = true
                 _state.update { it.copy(frontCamera = cameraManager.isFrontCamera) }
+                refreshAvailableQualities()
                 updateCamera()
             } catch (e: Exception) {
                 Log.e(TAG, "Camera init failed", e)
@@ -177,8 +182,30 @@ class StreamingService : LifecycleService() {
         runCatching { cameraManager.switchCamera() }
             .onFailure { Log.e(TAG, "Switch camera failed", it) }
         _state.update { it.copy(frontCamera = cameraManager.isFrontCamera) }
+        refreshAvailableQualities()
         // Frame size may change with the camera: start a fresh encoder session.
         encoderSessionRequested = true
+    }
+
+    /** Applies and saves a stream preset; takes effect immediately, even while streaming. */
+    fun setQuality(newQuality: StreamQuality) {
+        if (newQuality == quality) return
+        quality = newQuality
+        StreamQuality.save(this, newQuality)
+        frameRateLimiter = FrameRateLimiter(newQuality.fps)
+        _state.update { it.copy(quality = newQuality) }
+        if (cameraReady) {
+            runCatching { cameraManager.setStreamFormat(newQuality.size, newQuality.fps) }
+                .onFailure { e -> _state.update { it.copy(error = e.message) } }
+        }
+        encoderSessionRequested = true
+    }
+
+    /** The front camera often can't do 60 fps: fall back to the default preset there. */
+    private fun refreshAvailableQualities() {
+        val available = StreamQuality.available(cameraManager.maxSupportedFps())
+        _state.update { it.copy(availableQualities = available) }
+        if (quality !in available) setQuality(StreamQuality.DEFAULT)
     }
 
     fun refreshAddresses() {
@@ -321,7 +348,8 @@ class StreamingService : LifecycleService() {
             if (SystemClock.elapsedRealtime() < encoderRetryAtMs) return
             encoderSessionRequested = false
             releaseEncoder()
-            current = H264Encoder(width, height, FPS, BITRATE, I_FRAME_INTERVAL_S) { frame ->
+            val preset = quality
+            current = H264Encoder(width, height, preset.fps, preset.bitrate, I_FRAME_INTERVAL_S) { frame ->
                 val backCamera = !cameraManager.isFrontCamera
                 streamer?.send(frame, StreamProtocol.flags(orientationDegrees, backCamera))
             }

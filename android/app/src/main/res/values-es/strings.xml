@@ -36,6 +36,12 @@
     <string name="action_stop">Detener</string>
     <string name="action_switch_camera">Cambiar cámara</string>
 
+    <string name="quality_button">Calidad: %1$s</string>
+    <string name="quality_title">Calidad del vídeo (se guarda en este teléfono)</string>
+    <string name="quality_hd_30">720p · 30 fps — videollamadas, se calienta menos</string>
+    <string name="quality_fhd_30">1080p · 30 fps — más nítido, se calienta más</string>
+    <string name="quality_hd_60">720p · 60 fps — movimiento fluido para OBS, gasta más batería</string>
+
     <string name="error_camera_permission">Se requiere permiso de cámara</string>
     <string name="toast_streaming_stopped">Transmisión detenida</string>
 </resources>

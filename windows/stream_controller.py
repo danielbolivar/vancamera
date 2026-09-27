@@ -75,6 +75,7 @@ class StreamController:
         self._disconnect_reason = ""
         self._vcam: Optional[VirtualCamBridge] = None
         self.vcam_error: Optional[str] = None
+        self.vcam_device: Optional[str] = None
 
         # Latest decoded frame handed over by the receive thread.
         self._frame_lock = threading.Lock()
@@ -179,17 +180,19 @@ class StreamController:
         if vcam.start():
             self._vcam = vcam
             self.vcam_error = None
+            self.vcam_device = vcam.device_name
         else:
             # Keep going: the preview still works and tells the user what is missing.
-            self.vcam_error = vcam.last_error or "OBS-VirtualCam not available"
+            self.vcam_error = vcam.last_error or "virtual camera not available"
 
     def _run(self, device: DiscoveredDevice, auto_reconnect: bool):
         attempt = 0
         ever_connected = False
         self._set_status(StreamState.CONNECTING, f"Connecting to {device.name}…", device)
-        self._ensure_vcam()
 
         while not self._stop_event.is_set():
+            # Retried on every attempt: the camera may be registered while VanCamera is running.
+            self._ensure_vcam()
             error = self._connect_once(device)
             if error is None:
                 attempt = 0
@@ -268,6 +271,10 @@ class StreamController:
             try:
                 vcam = self._vcam
                 if vcam is not None:
+                    # The virtual camera follows the phone's stream size (720p or 1080p preset).
+                    long_side, short_side = max(frame.shape[:2]), min(frame.shape[:2])
+                    if (vcam.width, vcam.height) != (long_side, short_side):
+                        vcam.set_size(long_side, short_side)
                     vcam.send_frame(frame_transform.for_virtual_camera(frame, orientation, is_back))
                     self.frames_to_vcam += 1
                 if self.preview_enabled:

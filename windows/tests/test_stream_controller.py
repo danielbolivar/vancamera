@@ -19,10 +19,15 @@ class FakeVcam:
         self.width, self.height = width, height
         self.frames = []
         self.last_error = None
+        self.device_name = "Fake Camera"
         self.stopped = False
         FakeVcam.instances.append(self)
 
     def start(self):
+        return True
+
+    def set_size(self, width, height):
+        self.width, self.height = width, height
         return True
 
     def send_frame(self, frame):
@@ -70,6 +75,9 @@ def test_streams_to_virtual_camera_and_preview(tmp_path):
         controller.start(device(phone.port))
         assert wait_for(lambda: controller.status.state == StreamState.STREAMING)
         vcam = FakeVcam.instances[0]
+        assert controller.vcam_device == "Fake Camera"
+        # The virtual camera follows the stream size (the fake phone sends 320x240).
+        assert wait_for(lambda: (vcam.width, vcam.height) == (320, 240))
         assert wait_for(lambda: len(vcam.frames) >= 5)
         # Portrait: the 320x240 landscape frame is rotated to 240x320.
         assert vcam.frames[-1] == (320, 240, 3)

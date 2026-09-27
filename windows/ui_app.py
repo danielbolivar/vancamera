@@ -371,10 +371,11 @@ class VanCameraApp:
         if status.state in (StreamState.STREAMING, StreamState.RECONNECTING, StreamState.CONNECTING):
             if self.controller.vcam_error:
                 self._show_hint(
-                    "Virtual camera unavailable: install OBS-VirtualCam 2.0.5 and restart VanCamera "
+                    "Virtual camera unavailable: reinstall VanCamera (it registers the \"VanCamera\" camera) "
                     f"({self.controller.vcam_error}). The preview still works.", error=True)
             elif status.state == StreamState.STREAMING:
-                self._show_hint('In Zoom / Teams / Discord select the camera named "OBS-Camera".')
+                name = self.controller.vcam_device or "VanCamera"
+                self._show_hint(f'In Zoom / Teams / Discord select the camera named "{name}".')
             else:
                 self._show_hint(status.message)
             return
